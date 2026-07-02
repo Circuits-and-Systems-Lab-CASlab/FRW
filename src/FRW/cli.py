@@ -133,7 +133,7 @@ if __name__ == "__main__":
         )
 
         print(f"Total Walks Completed: {len(export_data['walks'])}")
-        print(f"Estimated H: {export_data['H']:.6f}")
+        print(f"Estimated Sg: {export_data['Sg']:.6f}")
 
         #get metrics
         export_data["metrics"] = calculate_frw_metrics(export_data["walks"], system_conductors, master_vgss)

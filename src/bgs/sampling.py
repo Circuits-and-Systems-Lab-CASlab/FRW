@@ -14,7 +14,6 @@ ImportanceFunction = Callable[[np.ndarray], float]
 
 def uniform_importance(_point: np.ndarray) -> float:
     """Default Algorithm 4.1 importance function: p(r) = 1."""
-
     return 1.0
 
 
@@ -118,19 +117,15 @@ class VGSSSamplingStats:
         if self.proposal_count == 0: return 0.0
         return self.accepted_count / self.proposal_count
 
-    def estimate_H(self, context: VGSSSamplingContext) -> float:
+    def estimate_Sg(self, context: VGSSSamplingContext) -> float:
         """
-        Estimate H = integral_VGSS p(r) dS from Algorithm 4.1.
-
-        Each raw proposal has density 1 / total_component_area over the
-        component-BGS representation.  The geometry, 1/n_c, and p(r)/U
-        rejections make the final acceptance probability H / (U*A_raw).
+        Sg is the estimated area of the union of all BGS surfaces in one net, based on the acceptance rate.
         """
 
         if self.proposal_count == 0:
-            raise ValueError("H cannot be estimated before any VGSS proposals.")
+            raise ValueError("Sg cannot be estimated before any VGSS proposals.")
         return (
-            context.upper_bound * context.total_component_area * self.acceptance_rate
+            context.total_component_area * self.acceptance_rate
         )
 
     def as_dict(self, context: VGSSSamplingContext):
@@ -146,7 +141,7 @@ class VGSSSamplingStats:
             "acceptance_rate": self.acceptance_rate,
             "upper_bound_U": context.upper_bound,
             "total_component_area": context.total_component_area,
-            "H_estimate": self.estimate_H(context),
+            "Sg_estimate": self.estimate_Sg(context),
         }
 
 

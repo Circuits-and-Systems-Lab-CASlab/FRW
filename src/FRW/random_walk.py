@@ -98,7 +98,7 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
         })
 
     return {
-        "H": sampling_stats.estimate_H(master_vgss.sampling_context),
+        "Sg": sampling_stats.estimate_Sg(master_vgss.sampling_context),
         "sampling_stats": sampling_stats.as_dict(master_vgss.sampling_context),
         "walks": all_walk_data
     }
