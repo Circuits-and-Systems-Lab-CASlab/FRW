@@ -27,10 +27,10 @@ def test_sampling_stats_return_area_when_p_is_one() -> None:
 
     assert stats.proposal_count == 25
     assert stats.accepted_count == 25
-    assert stats.estimate_H(context) == pytest.approx(surface.area)
+    assert stats.estimate_Sg(context) == pytest.approx(surface.area)
 
 
-def test_sampling_stats_estimate_weighted_H() -> None:
+def test_sampling_stats_estimate_weighted_Sg() -> None:
     surface = _surface("C1", Bounds(0, 1, 0, 1, 0, 1))
     context = prepare_vgss_sampling(
         [surface],
@@ -43,7 +43,7 @@ def test_sampling_stats_estimate_weighted_H() -> None:
     for _ in range(4000):
         sample_on_vgss(context, rng, stats=stats)
 
-    assert stats.estimate_H(context) == pytest.approx(3.0, rel=0.04)
+    assert stats.estimate_Sg(context) == pytest.approx(3.0, rel=0.04)
     assert stats.importance_rejections > 0
 
 
@@ -68,7 +68,7 @@ def test_frw_batch_keeps_original_walk_shape_and_uses_vgss_start() -> None:
     assert len(result["walks"]) == 8
     assert result["sampling_stats"]["accepted_count"] == 8
     assert result["sampling_stats"]["proposal_count"] >= 8
-    assert result["H"] == result["sampling_stats"]["H_estimate"]
+    assert result["Sg"] == result["sampling_stats"]["Sg_estimate"] 
 
     for walk in result["walks"]:
         assert len(walk["start_point"]) == 3
