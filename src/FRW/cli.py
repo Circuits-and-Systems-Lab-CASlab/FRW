@@ -7,6 +7,7 @@ from bgs.matlab_parser import parse_matlab_geometry
 from bgs.vgss import build_all_net_vgss
 from .random_walk import run_frw_geometry
 from .visualization import visualize_3d_walk
+from .metrics import calculate_frw_metrics, print_metrics
 
 
 def _select_master_vgss(all_net_vgss, master_name: str | None = None):
@@ -43,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-distance",
         type=float,
         default=10.0,
-        help="Maximum distance fallback for VGSS. Default: 10.0.",
+        help="Maximum distance fallback for VGSS used only when no finite distance to another non-touching conductor can be found. Default: 10.0.",
     )
     parser.add_argument(
         "--walks",
@@ -63,11 +64,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("output") / "frw_exported_data.json",
         help="Path to export the FRW walk data JSON. Default: output/frw_exported_data.json",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group() #(--master | --all)
+    group.add_argument(
         "--master",
         type=str,
         default=None,
         help="Name of the VGSS net to use as the master (for example: C1). Default: the first net.",
+    )
+    group.add_argument(
+        "--all",
+        action="store_true",
+        help="Run FRW for every generated net instead of a single selected master net.",
     )
     parser.add_argument(
         "--no-visualization",
@@ -93,36 +100,46 @@ if __name__ == "__main__":
         print("No conductors found in the file.")
         raise SystemExit(1)
 
-    # print("Parsed Conductors:")
-    # for conductor in system_conductors:
-    #     print(conductor)
-
     all_net_vgss = build_all_net_vgss(
         system_conductors,
         scale_factor=args.scale_factor,
         max_distance=args.max_distance,
     )
 
-    master_vgss = _select_master_vgss(all_net_vgss, args.master)
     rng = np.random.default_rng(args.seed)
 
-    if not args.no_visualization:
-        visualize_3d_walk(system_conductors, master_vgss, rng)
+    if args.all:
+        nets_to_run = all_net_vgss
+        export_target = []
+    else:
+        master_vgss = _select_master_vgss(all_net_vgss, args.master)
+        nets_to_run = [master_vgss]
+        export_target = None
 
-    print("\nExecuting Batch Geometric Walk Engine...")
-    print(f"Master Net: {master_vgss.net.name}")
-    print(f"Conductors: {', '.join(master_vgss.net.conductor_names)}")
-    print("-" * 30)
+    results = []
+    for master_vgss in nets_to_run:
+        if not args.no_visualization:
+            visualize_3d_walk(system_conductors, master_vgss, rng)
 
-    export_data = run_frw_geometry(
-        system_conductors,
-        master_vgss,
-        rng,
-        num_walks=args.walks,
-    )
+        print("-" * 60)
+        print("\nExecuting Batch Geometric Walk Engine...")
+        print(f"Master Net: {master_vgss.net.name}")
+        print(f"Conductors: {', '.join(master_vgss.net.conductor_names)}")
+        print("-" * 30)
 
-    print(f"Total Walks Completed: {len(export_data['walks'])}")
-    print(f"Estimated H: {export_data['H']:.6f}")
+        export_data = run_frw_geometry(
+            system_conductors,
+            master_vgss,
+            rng,
+            num_walks=args.walks,
+        )
+
+        print(f"Total Walks Completed: {len(export_data['walks'])}")
+        print(f"Estimated H: {export_data['H']:.6f}")
+
+        export_data["metrics"] = calculate_frw_metrics(export_data["walks"], system_conductors, master_vgss)
+        print_metrics(export_data["metrics"])
+        results.append(export_data)
 
     output_filename = args.output
     output_filename.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +147,9 @@ if __name__ == "__main__":
 
     with open(output_filename, "w") as outfile:
         import json
-        json.dump(export_data, outfile, indent=4)
+        json.dump(results[0] if export_target is None else results, outfile, indent=4)
 
-    print(f"Success! Data for {args.walks} walks successfully saved.")
+    if args.all:
+        print(f"Success! Data for {args.walks} walks successfully saved for {len(results)} nets.")
+    else:
+        print(f"Success! Data for {args.walks} walks successfully saved.")
