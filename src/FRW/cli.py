@@ -118,15 +118,13 @@ if __name__ == "__main__":
 
     results = []
     for master_vgss in nets_to_run:
-        if not args.no_visualization:
-            visualize_3d_walk(system_conductors, master_vgss, rng)
-
         print("-" * 60)
         print("\nExecuting Batch Geometric Walk Engine...")
         print(f"Master Net: {master_vgss.net.name}")
         print(f"Conductors: {', '.join(master_vgss.net.conductor_names)}")
         print("-" * 30)
 
+        #actual FRW
         export_data = run_frw_geometry(
             system_conductors,
             master_vgss,
@@ -137,9 +135,13 @@ if __name__ == "__main__":
         print(f"Total Walks Completed: {len(export_data['walks'])}")
         print(f"Estimated H: {export_data['H']:.6f}")
 
+        #get metrics
         export_data["metrics"] = calculate_frw_metrics(export_data["walks"], system_conductors, master_vgss)
         print_metrics(export_data["metrics"])
         results.append(export_data)
+
+        if not args.no_visualization:
+            visualize_3d_walk(system_conductors, master_vgss, rng, all_net_vgss)
 
     output_filename = args.output
     output_filename.parent.mkdir(parents=True, exist_ok=True)
@@ -153,3 +155,4 @@ if __name__ == "__main__":
         print(f"Success! Data for {args.walks} walks successfully saved for {len(results)} nets.")
     else:
         print(f"Success! Data for {args.walks} walks successfully saved.")
+
