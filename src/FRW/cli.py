@@ -1,5 +1,4 @@
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +7,21 @@ from bgs.matlab_parser import parse_matlab_geometry
 from bgs.vgss import build_all_net_vgss
 from .random_walk import run_frw_geometry
 from .visualization import visualize_3d_walk
+
+
+def _select_master_vgss(all_net_vgss, master_name: str | None = None):
+    if not all_net_vgss:
+        raise ValueError("No VGSS nets were generated.")
+
+    if master_name is None:
+        return all_net_vgss[0]
+
+    for net_vgss in all_net_vgss:
+        if getattr(net_vgss.net, "name", None) == master_name:
+            return net_vgss
+
+    available_names = ", ".join(getattr(net_vgss.net, "name", "<unknown>") for net_vgss in all_net_vgss)
+    raise ValueError(f"Master net '{master_name}' was not found. Available nets: {available_names}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,6 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to export the FRW walk data JSON. Default: output/frw_exported_data.json",
     )
     parser.add_argument(
+        "--master",
+        type=str,
+        default=None,
+        help="Name of the VGSS net to use as the master (for example: C1). Default: the first net.",
+    )
+    parser.add_argument(
         "--no-visualization",
         action="store_true",
         help="Disable 3D visualization of the geometry and VGSS.",
@@ -82,7 +102,8 @@ if __name__ == "__main__":
         scale_factor=args.scale_factor,
         max_distance=args.max_distance,
     )
-    master_vgss = all_net_vgss[0]
+
+    master_vgss = _select_master_vgss(all_net_vgss, args.master)
     rng = np.random.default_rng(args.seed)
 
     if not args.no_visualization:

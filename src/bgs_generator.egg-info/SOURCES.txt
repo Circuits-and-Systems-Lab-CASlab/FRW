@@ -1,6 +1,8 @@
 README.md
-README.txt
 pyproject.toml
+src/FRW/cli.py
+src/FRW/random_walk.py
+src/FRW/visualization.py
 src/bgs/__init__.py
 src/bgs/distances.py
 src/bgs/gaussian_surface.py
@@ -20,6 +22,7 @@ src/bgs_generator.egg-info/entry_points.txt
 src/bgs_generator.egg-info/requires.txt
 src/bgs_generator.egg-info/top_level.txt
 tests/test_distances.py
+tests/test_frw_integration.py
 tests/test_gaussian_surface.py
 tests/test_parser.py
 tests/test_sampling.py
