@@ -81,6 +81,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable 3D visualization of the geometry and VGSS.",
     )
+    parser.add_argument(
+        "--gft",
+        action="store_true",
+        help="Use GFT sampling for the random walks.",
+    )
+
     return parser
 
 

@@ -1,6 +1,8 @@
 import numpy as np
 
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
+from ggft.ggft import CubeGFT
+
 
 # ==========================================
 # 1. GEOMETRY & CONDUCTOR PARSER
@@ -52,7 +54,7 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
 
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
-
+    gft = CubeGFT.load("src/ggft/homogeneous_cube_n23.npz")
 
     for walk in range(num_walks):
         percent_done = (walk + 1) / num_walks * 100.0
@@ -89,7 +91,8 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
                 hit_target = conductors[nearest_idx].name
                 break
 
-            current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
+                #current_p = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
+                current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
 
         all_walk_data.append({
             "start_point": start_point.tolist(),
