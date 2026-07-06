@@ -91,8 +91,8 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
                 hit_target = conductors[nearest_idx].name
                 break
 
-                #current_p = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
-                current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
+            current_p = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
+            # current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
 
         all_walk_data.append({
             "start_point": start_point.tolist(),
