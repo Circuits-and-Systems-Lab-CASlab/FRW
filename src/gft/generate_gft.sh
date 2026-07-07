@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESOLUTION="${1:-200}"
+RESOLUTION="${1:-100}"
 TOLERANCE="${2:-1e-12}"
 MAX_ITERATIONS="${3:-20000}"
 
