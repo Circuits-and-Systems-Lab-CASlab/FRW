@@ -54,7 +54,7 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
 
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
-    gft = CubeGFT.load("src/ggft/homogeneous_cube_n23.npz")
+    gft = CubeGFT.load("src/gft/data/cube_gft_n200.npz")
 
     for walk in range(num_walks):
         percent_done = (walk + 1) / num_walks * 100.0
