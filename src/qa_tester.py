@@ -41,7 +41,8 @@ def main():
     results_data = []
 
     # Filter inputs based on TARGET_FILES
-    input_files = [f for f in INPUT_DIR.glob("*.m") if f.name in TARGET_FILES]
+    # Grab every single .m file in the directory
+    input_files = list(INPUT_DIR.glob("*.m"))
 
     if not input_files:
         print(f"No input files found in {INPUT_DIR} matching targets.")
