@@ -26,45 +26,25 @@ class CubeGFT:
 
         with np.load(path, allow_pickle=False) as data:
             resolution = int(data["resolution"])
-
-            probabilities = np.asarray(
-                data["probabilities"],
-                dtype=np.float64,
-            ).reshape(-1)
-
-            panel_centers = np.asarray(
-                data["panel_centers"],
-                dtype=np.float64,
-            ).reshape(-1, 3)
+            probabilities = np.asarray( data["probabilities"], dtype=np.float64, ).reshape(-1)
+            panel_centers = np.asarray(data["panel_centers"], dtype=np.float64, ).reshape(-1, 3)
 
         expected_panels = 6 * resolution * resolution
-
         if probabilities.shape != (expected_panels,):
-            raise ValueError(
-                f"Expected {expected_panels} probabilities, "
-                f"got {probabilities.shape}"
-            )
-
+            raise ValueError( f"Expected {expected_panels} probabilities, " f"got {probabilities.shape}")
         if panel_centers.shape != (expected_panels, 3):
-            raise ValueError(
-                f"Expected panel centers with shape "
-                f"({expected_panels}, 3), "
-                f"got {panel_centers.shape}"
-            )
-
+            raise ValueError(f"Expected panel centers with shape " f"({expected_panels}, 3), " f"got {panel_centers.shape}" )
         if not np.all(np.isfinite(probabilities)):
             raise ValueError("GFT contains non-finite probabilities")
-
         if np.any(probabilities < 0.0):
             raise ValueError("GFT contains negative probabilities")
 
         probability_sum = probabilities.sum()
-
         if probability_sum <= 0.0:
             raise ValueError("GFT probability sum must be positive")
 
+        #generate cdf
         probabilities = probabilities / probability_sum
-
         cdf = np.cumsum(probabilities)
         cdf[-1] = 1.0
 

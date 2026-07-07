@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+bin/*
+!bin/.gitkeep
+data/*.bin
+data/*.npz

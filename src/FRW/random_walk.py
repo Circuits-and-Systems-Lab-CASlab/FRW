@@ -1,7 +1,7 @@
 import numpy as np
 
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
-from ggft.ggft import CubeGFT
+from gft.ggft import CubeGFT
 
 
 # ==========================================
@@ -54,7 +54,11 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100)
 
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
-    gft = CubeGFT.load("src/ggft/homogeneous_cube_n23.npz")
+    try:
+        gft = CubeGFT.load("src/gft/data/cube_gft_n300.npz")
+    except FileNotFoundError:
+        print("GFT file not found. Please generate it first by running src/gft/generate_gft.sh.")
+        exit(1)
 
     for walk in range(num_walks):
         percent_done = (walk + 1) / num_walks * 100.0
