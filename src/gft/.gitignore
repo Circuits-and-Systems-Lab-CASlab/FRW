@@ -4,4 +4,3 @@ __pycache__/
 bin/*
 !bin/.gitkeep
 data/*.bin
-data/*.npz
