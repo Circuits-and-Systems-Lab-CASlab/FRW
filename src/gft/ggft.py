@@ -55,30 +55,21 @@ class CubeGFT:
             resolution=resolution,
         )
 
-    def sample_relative_point( self, rng: np.random.Generator, ) -> FloatArray:
-
+    def sample_relative_point( self, rng: np.random.Generator, ) -> tuple[FloatArray, int, float]:
+        """Sample a relative point and return (coordinates, index, probability)."""
         u = rng.random()
 
         index = int( np.searchsorted(self.cdf, u, side="right", ) )
-        index = min( index, len(self.panel_centers) - 1, )
+        index = min( index, len(self.panel_centers) - 1, ) # do we need this?
 
-        return self.panel_centers[index].copy()
+        return self.panel_centers[index].copy(), index, self.probabilities[index]
 
-    def sample_next_point(
-        self,
-        current_point: FloatArray,
-        cube_half_size: float,
-        rng: np.random.Generator,
-    ) -> FloatArray:
-        if cube_half_size <= 0.0:
-            raise ValueError( "cube_half_size must be positive" )
+    def sample_next_point(self,current_point: FloatArray,cube_half_size: float,rng: np.random.Generator,)-> tuple[FloatArray,int,float]:
 
         current_point = np.asarray( current_point, dtype=np.float64, )
 
-        if current_point.shape != (3,):
-            raise ValueError( "current_point must have shape (3,)" )
-
-        relative_point = self.sample_relative_point(rng)
+        relative_point, index, probability = self.sample_relative_point(rng)
+        print(f"Sampled relative point: {relative_point}, index: {index}, probability: {probability}")
 
         #next_point = current_point + a/2 * ξ
-        return (current_point + cube_half_size * relative_point )
+        return (current_point + cube_half_size * relative_point ), index,probability
