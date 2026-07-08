@@ -10,15 +10,13 @@ from pathlib import Path
 import numpy as np
 
 # ==========================================
-# 1. DYNAMIC PATH & DIRECTORY FIX
+# DYNAMIC PATH
 # ==========================================
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 os.chdir(PROJECT_ROOT)
 
-# ==========================================
-# 2. CORE IMPORTS
-# ==========================================
 from bgs.matlab_parser import parse_matlab_geometry
 from bgs.vgss import build_all_net_vgss
 from FRW.random_walk import run_frw_geometry
@@ -26,7 +24,7 @@ from FRW.metrics import calculate_frw_metrics
 from FRW.visualization import visualize_3d_walk
 
 # ==========================================
-# 3. CONFIGURATION 
+# CONFIGURATION 
 # ==========================================
 INPUT_DIR = PROJECT_ROOT / "input"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "qa_results"
@@ -53,19 +51,29 @@ def build_parser():
 # MULTIPROCESSING WORKER TASK
 # ==========================================
 def execute_frw_task(task_payload):
+    # Ensure background worker operates from the project root.
     os.chdir(PROJECT_ROOT)
     
+    # Unpack the massive tuple into individual, readable variables.
     (input_filename, conductors, net_vgss, all_net_vgss_list, 
      sf, max_dist, seed, walks, no_plots, verbose) = task_payload
 
+    #Stops print statements from FRW code
     devnull = open(os.devnull, 'w')
     
+    # redirect_stdout forces all 'print()' calls inside the block to go to 
+    # devnull UNLESS the user explicitly passed --verbose.
     with redirect_stdout(sys.stdout if verbose else devnull):
+        # Initialize an isolated Random Number Generator for this specific core.
+        # Seeding it guarantees mathematical reproducibility for this exact run.
         rng = np.random.default_rng(seed)
         
+        # 1. Execute Floating Random Walk
         export_data = run_frw_geometry(conductors, net_vgss, rng, num_walks=walks)
+        # 2. Analyze the paths to determine hit rates, hops, and escapes
         metrics = calculate_frw_metrics(export_data["walks"], conductors, net_vgss)
 
+        # 3. Headless Visualization Rendering
         if not no_plots:
             plot_filename = f"{Path(input_filename).stem}_{net_vgss.net.name}_SF{sf}_S{seed}_W{walks}.png"
             vis_rng = np.random.default_rng(seed) 
@@ -74,11 +82,14 @@ def execute_frw_task(task_payload):
                 save_path=PLOTS_DIR / plot_filename, show=False
             )
 
+    #Close files when done to prevent memory leaks in the worker pool
     devnull.close()
 
+    # Safely extract sub-dictionaries
     term_rates = metrics.get("termination_rates", {})
     hop_stats = metrics.get("hop_statistics", {})
     
+    # 4. Flatten and Return Data
     return {
         "Input File": input_filename,
         "Net Name": net_vgss.net.name,
@@ -100,7 +111,7 @@ def execute_frw_task(task_payload):
     }
 
 # ==========================================
-# MAIN ORCHESTRATOR
+# MAIN 
 # ==========================================
 def main():
     args = build_parser().parse_args()
@@ -108,21 +119,27 @@ def main():
     
     print(f"Starting Optimized Parallel QA Pipeline (Using {args.workers} Cores)...\n" + "="*50)
     
-    # [FIX 2] - Default to ALL files if none are provided
+    # Default to ALL files if none are provided
     if args.files:
         input_files = [INPUT_DIR / f for f in args.files if (INPUT_DIR / f).exists()]
     else:
         input_files = list(INPUT_DIR.glob("*.m"))
-        # Optional: Sort the files alphabetically so the terminal output feels more organized
+        # Sort the files alphabetically
         input_files.sort()
 
     if not input_files:
         print(f"No valid input files found in {INPUT_DIR}.")
         return
 
+    # ==========================================
+    # TASK MATRIX GENERATION
+    # ==========================================
+
     tasks = []
+    #Remove prints from functions used in FRW for clean terminal
     devnull = open(os.devnull, 'w')
     
+
     for input_file in input_files:
         print(f"Preparing geometry: {input_file.name}")
         try:
@@ -131,12 +148,17 @@ def main():
             print(f" [!] Skipping {input_file.name} due to parser error: {e}")
             continue
 
+        # Iterate through geometric bounding parameters
         for sf, max_dist in itertools.product(args.scale_factors, args.max_dists):
+            # Silence the internal prints of build_all_net_vgss unless --verbose is used 
             with redirect_stdout(sys.stdout if args.verbose else devnull):
                 all_net_vgss = build_all_net_vgss(conductors, scale_factor=sf, max_distance=max_dist)
 
+            # Iterate through every detected electrical net in the geometry
             for net_vgss in all_net_vgss:
+                # Iterate through the random seeds and walk counts
                 for seed, walks in itertools.product(args.seeds, args.walks):
+                    # Package everything needed for one isolated run into a tuple
                     tasks.append((
                         input_file.name, conductors, net_vgss, all_net_vgss, 
                         sf, max_dist, seed, walks, args.no_plots, args.verbose
@@ -148,14 +170,23 @@ def main():
     print(f"\nSuccessfully built {total_tasks} simulation tasks.")
     print("Executing tests... (This may take a moment)\n")
 
+    # ==========================================
+    # PARALLEL EXECUTION ENGINE
+    # ==========================================
+
     results_data = []
 
+    # Initialize worker pool with requested number of CPU cores
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:
+        #Submit tasks to workers
         future_to_task = {executor.submit(execute_frw_task, task): task for task in tasks}
         
         completed = 0
+        #Collect results
         for future in concurrent.futures.as_completed(future_to_task):
             completed += 1
+
+            # Retrieve the original task tuple to extract metadata for printing
             task = future_to_task[future]
             net_name, sf, seed, walks = task[1].name if hasattr(task[1], 'name') else task[2].net.name, task[4], task[6], task[7]
             
@@ -165,9 +196,10 @@ def main():
                 # Keep the terminal output real-time, even if it prints out of order
                 print(f"[{completed}/{total_tasks}] Finished | Net: {net_name:<6} | SF: {sf} | Seed: {seed:<5} | Walks: {walks:<6}")
             except Exception as exc:
+                #Isolate failures
                 print(f"[{completed}/{total_tasks}] FAILED   | Net: {net_name:<6} | Error: {exc}")
 
-    # [FIX 1] - Sort the final data before writing to CSV
+    #Sort the final data before writing to CSV
     if results_data:
         results_data.sort(key=lambda row: (
             row["Input File"], 
