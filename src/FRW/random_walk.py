@@ -48,9 +48,9 @@ def sample_point_on_maximal_cube(p_center, radius, rng):
     return sample_point_on_bgs(cube_min, cube_max, rng)
 
 
-def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=100):
+def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150):
     sys_center, sys_size = get_system_bounds(conductors)
-    math_kill_radius = sys_size * 1000.0
+    math_kill_radius = sys_size * 500_000.0 #<- balance escape and max hops rate
 
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
