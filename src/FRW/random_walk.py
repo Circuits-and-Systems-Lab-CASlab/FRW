@@ -72,7 +72,7 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
         start_point = current_p.copy()
         current_walk_path = []
         hit_target = None
-
+        probability = 1
         for hop in range(max_hops):
             dist_to_center = np.max(np.abs(current_p - sys_center))
             if dist_to_center > math_kill_radius:
@@ -88,14 +88,15 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
             # SAVING BOTH CENTER AND SIDE LENGTH
             current_walk_path.append({
                 "center": current_p.tolist(),
-                "a": float(side_a)
+                "a": float(side_a),
+                "P(r,r')": float(probability),
             })
 
             if min_dist < 1e-4:
                 hit_target = conductors[nearest_idx].name
                 break
 
-            current_p = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
+            current_p, index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
             # current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
 
         all_walk_data.append({

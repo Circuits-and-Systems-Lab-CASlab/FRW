@@ -13,6 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from bgs.sampling import sample_on_vgss
 from .random_walk import get_system_bounds, sample_point_on_maximal_cube
+from gft.ggft import CubeGFT
 
 
 # ==========================================
@@ -20,11 +21,14 @@ from .random_walk import get_system_bounds, sample_point_on_maximal_cube
 # ==========================================
 
 
-def _run_visual_walk(conductors, master_vgss, rng, max_hops=100):
+def _run_visual_walk(conductors, master_vgss, rng, max_hops=150):
     """Run one small FRW example used only by the visualizations."""
 
     sys_center, sys_size = get_system_bounds(conductors)
-    visual_kill_radius = sys_size * 2.0
+    visual_kill_radius = sys_size * 5
+
+
+    gft = CubeGFT.load("src/gft/data/cube_gft_n200.npz")
 
     path_points = []
     maximal_cubes = []
@@ -34,7 +38,7 @@ def _run_visual_walk(conductors, master_vgss, rng, max_hops=100):
     path_points.append(current_p.copy())
 
     print("\n[VISUALIZATION WALK LOG]")
-
+    probability = 1
     for hop in range(max_hops):
         if np.max(np.abs(current_p - sys_center)) > visual_kill_radius:
             terminal = "Infinity (Ground)"
@@ -49,7 +53,8 @@ def _run_visual_walk(conductors, master_vgss, rng, max_hops=100):
         print(
             f"Hop {hop + 1}: Center = "
             f"[{current_p[0]:.4f}, {current_p[1]:.4f}, {current_p[2]:.4f}], "
-            f"a = {2 * min_dist:.4f}"
+            f"\ta = {2 * min_dist:.4f}"
+            f"\tP(r,r') = {probability}"
         )
 
         if min_dist < 1e-4:
@@ -57,7 +62,7 @@ def _run_visual_walk(conductors, master_vgss, rng, max_hops=100):
             print(f"TERMINATED ON: {terminal}")
             break
 
-        current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
+        current_p, index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
         path_points.append(current_p.copy())
 
     return np.asarray(path_points, dtype=float), maximal_cubes, terminal
@@ -410,9 +415,8 @@ def visualize_3d_walk(
     lighter Gaussian surfaces so the walk can be understood in full geometry.
     """
 
-    path_points, maximal_cubes, terminal = _run_visual_walk(
-        conductors, master_vgss, rng, max_hops=max_hops
-    )
+    path_points, maximal_cubes, terminal = _run_visual_walk(conductors, master_vgss, rng, max_hops=max_hops)
+
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
     net_colors = _net_colors(net_vgss_collection)
     master_net_name = master_vgss.net.name

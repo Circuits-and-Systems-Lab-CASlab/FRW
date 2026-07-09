@@ -125,6 +125,10 @@ if __name__ == "__main__":
         print(f"Conductors: {', '.join(master_vgss.net.conductor_names)}")
         print("-" * 30)
 
+
+        if not args.no_visualization:
+            visualize_3d_walk(system_conductors, master_vgss, rng, all_net_vgss)
+
         #actual FRW
         export_data = run_frw_geometry(
             system_conductors,
@@ -141,8 +145,6 @@ if __name__ == "__main__":
         print_metrics(export_data["metrics"])
         results.append(export_data)
 
-        if not args.no_visualization:
-            visualize_3d_walk(system_conductors, master_vgss, rng, all_net_vgss)
 
     output_filename = args.output
     output_filename.parent.mkdir(parents=True, exist_ok=True)

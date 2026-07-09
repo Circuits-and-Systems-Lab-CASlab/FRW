@@ -65,11 +65,16 @@ class CubeGFT:
         return self.panel_centers[index].copy(), index, self.probabilities[index]
 
     def sample_next_point(self,current_point: FloatArray,cube_half_size: float,rng: np.random.Generator,)-> tuple[FloatArray,int,float]:
+        if cube_half_size <= 0.0:
+            raise ValueError( "cube_half_size must be positive" )
 
         current_point = np.asarray( current_point, dtype=np.float64, )
 
+        if current_point.shape != (3,):
+            raise ValueError( "current_point must have shape (3,)" )
+
         relative_point, index, probability = self.sample_relative_point(rng)
-        print(f"Sampled relative point: {relative_point}, index: {index}, probability: {probability}")
+        #print(f"Sampled relative point: {relative_point}, index: {index}, probability: {probability}")
 
         #next_point = current_point + a/2 * ξ
         return (current_point + cube_half_size * relative_point ), index,probability
