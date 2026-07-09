@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from bgs.sampling import sample_on_vgss
 from .random_walk import get_system_bounds, sample_point_on_maximal_cube
-from gft.ggft import CubeGFT
+from GGFT.ggft import CubeGFT
 
 
 # ==========================================

@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+from numpy.typing import NDArray
+
+
+FloatArray = NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class CubeGFT:
+    """GFT probabilities and first-hop weight values for the unit cube [-1, 1]^3."""
+
+    probabilities: FloatArray
+    cdf: FloatArray
+    panel_centers: FloatArray
+    wvt: FloatArray
+    resolution: int
+
+    @classmethod
+    def load(cls, path: str | Path) -> "CubeGFT":
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"GFT file not found: {path}")
+
+        #-------- load
+        with np.load(path, allow_pickle=False) as data:
+            resolution = int(data["resolution"])
+            probabilities = np.asarray(data["probabilities"], dtype=np.float64 ).reshape(-1)
+            panel_centers = np.asarray(data["panel_centers"], dtype=np.float64).reshape(-1, 3)
+            wvt = np.asarray(data["wvt"], dtype=np.float64).reshape(-1, 3)
+
+        #------ validity checks ------
+        panel_count = 6 * resolution * resolution
+        if probabilities.shape != (panel_count,):
+            raise ValueError(f"Expected {panel_count} probabilities, got {probabilities.shape}")
+        if panel_centers.shape != (panel_count, 3):
+            raise ValueError(f"Expected panel_centers shape ({panel_count}, 3), "f"got {panel_centers.shape}")
+        if wvt.shape != (panel_count, 3):
+            raise ValueError(f"Expected wvt shape ({panel_count}, 3), got {wvt.shape}")
+        if not np.all(np.isfinite(probabilities)) or np.any(probabilities < 0.0):
+            raise ValueError("Probabilities must be finite and non-negative")
+        if not np.all(np.isfinite(panel_centers)):
+            raise ValueError("Panel centers must be finite")
+        if not np.all(np.isfinite(wvt)):
+            raise ValueError("WVT values must be finite")
+
+        #-------- compute cdf -------
+        probability_sum = float(probabilities.sum())
+        probabilities = probabilities / probability_sum
+        cdf = np.cumsum(probabilities)
+        cdf[-1] = 1.0
+
+        return cls(
+            probabilities=probabilities,
+            cdf=cdf,
+            panel_centers=panel_centers,
+            wvt=wvt,
+            resolution=resolution,
+        )
+
+    def sample_relative_point(self, rng: np.random.Generator, ) -> tuple[FloatArray, int, float]:
+        """Return (relative point, panel index, panel probability)."""
+        u = float(rng.random())
+        index = int(np.searchsorted(self.cdf, u, side="right"))
+
+        #next point, index, probability
+        return ( self.panel_centers[index].copy(), index, float(self.probabilities[index]), )
+
+    def sample_next_point(self, current_point: FloatArray, cube_half_size: float, rng: np.random.Generator, ) -> tuple[FloatArray, int, float]:
+        """Map a sampled unit-cube point onto an axis-aligned physical cube."""
+
+        relative_point, index, probability = self.sample_relative_point(rng)
+        current_point = np.asarray(current_point, dtype=np.float64)
+
+        #r' = r + a/2 * ξ where a the whole side of the cube
+        next_point = current_point + cube_half_size * relative_point
+        return next_point, index, probability
+
+    def first_hop_weight( self, panel_index: int, surface_normal: FloatArray, cube_half_size: float, ) -> float:
+        """Return omega for the selected panel of the first transition cube."""
+
+        surface_normal = np.asarray(surface_normal, dtype=np.float64)
+
+        normal_length = float(np.linalg.norm(surface_normal))
+
+        unit_normal = surface_normal / normal_length
+
+        #omega = - WVT * n  in WVT <- grad(P(r,r')/P(r,r')
+        omega = -float(np.dot(unit_normal, self.wvt[panel_index]))
+        omega = omega / cube_half_size # scale by 1 / cube_half_size to convert to maximal cube value
+        return omega
+
+    def sample_first_transition(
+        self,
+        current_point: FloatArray,
+        cube_half_size: float,
+        surface_normal: FloatArray,
+        rng: np.random.Generator,
+    ) -> tuple[FloatArray, int, float, float]:
+        """Return (next point, panel index, panel probability, omega)."""
+        next_point, panel_index, probability = self.sample_next_point(
+            current_point=current_point,
+            cube_half_size=cube_half_size,
+            rng=rng,
+        )
+        omega = self.first_hop_weight(
+            panel_index=panel_index,
+            surface_normal=surface_normal,
+            cube_half_size=cube_half_size,
+        )
+
+        return next_point, panel_index, probability, omega
