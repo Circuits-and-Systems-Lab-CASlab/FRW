@@ -144,6 +144,11 @@ if __name__ == "__main__":
         export_data["metrics"] = calculate_frw_metrics(export_data["walks"], system_conductors, master_vgss)
         print_metrics(export_data["metrics"])
         results.append(export_data)
+            #print the weights of each conductor
+        print("\nConductor Weights:")
+        for conductor in system_conductors:
+            print(f"{conductor.name}: {conductor.weight:.6f}")
+
 
 
     output_filename = args.output
