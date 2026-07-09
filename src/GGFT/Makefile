@@ -1,7 +1,7 @@
 CXX ?= g++
 CXXFLAGS ?= -std=c++17 -O3 -DNDEBUG -Wall -Wextra -Wpedantic
 
-TARGET := bin/ggft_homogeneous
+TARGET := bin/ggft
 SOURCES := src/main.cpp src/ggft_solver.cpp
 HEADERS := src/ggft_solver.h
 
@@ -20,4 +20,8 @@ test: $(TARGET)
 	python3 -m pytest -q
 
 clean:
+	rm -f $(TARGET)
+
+cleanall:
+	rm -rf data/*
 	rm -f $(TARGET)
