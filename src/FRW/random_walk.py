@@ -74,6 +74,23 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
         current_walk_path = []
         hit_target = None
         probability = 1
+
+        #_-----first transition------
+        distances = [c.distance_to_point(current_p) for c in conductors]
+        min_dist = min(distances)
+        nearest_idx = np.argmin(distances)
+        side_a = 2 * min_dist
+
+        surface_normal = conductors[nearest_idx].get_surface_normal(current_p) #normal of face nearsest to point
+        next_point, panel_index, probability, omega = gft.sample_first_transition(start_point, min_dist, surface_normal, rng)
+        current_walk_path.append({
+            "center": current_p.tolist(),
+            "a": float(side_a),
+            "P(r,r')": float(probability),
+        })
+        current_p = next_point
+
+        #----------------------------
         for hop in range(max_hops):
             dist_to_center = np.max(np.abs(current_p - sys_center))
             if dist_to_center > math_kill_radius:
@@ -82,11 +99,9 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
 
             distances = [c.distance_to_point(current_p) for c in conductors]
             min_dist = min(distances)
-
             nearest_idx = np.argmin(distances)
             side_a = 2 * min_dist
 
-            # SAVING BOTH CENTER AND SIDE LENGTH
             current_walk_path.append({
                 "center": current_p.tolist(),
                 "a": float(side_a),
@@ -100,10 +115,16 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
             current_p, index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
             # current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
 
+        #update omega weight array
+        conductors[nearest_idx].omega += omega
+        conductors[nearest_idx].num_hits +=1
+        conductors[nearest_idx].weight = conductors[nearest_idx].omega / conductors[nearest_idx].num_hits
+
         all_walk_data.append({
             "start_point": start_point.tolist(),
             "path_data": current_walk_path,
-            "hit_conductor": hit_target
+            "hit_conductor": hit_target,
+            "omega": conductors[nearest_idx].omega,
         })
 
     return {
