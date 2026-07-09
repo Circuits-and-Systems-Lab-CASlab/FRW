@@ -63,11 +63,7 @@ class CubeGFT:
         )
         
     #debug
-    def print_panels(
-        self,
-        start: int = 0,
-        end: int | None = None,
-    ) -> None:
+    def print_panels(self, start: int = 0, end: int | None = None, ) -> None:
         """Print probability and derivatives for each selected panel.
 
         By default, every panel is printed. Use ``start`` and ``end`` to print
@@ -81,7 +77,6 @@ class CubeGFT:
             raise ValueError(
                 f"Expected 0 <= start <= end <= {panel_count}"
             )
-
         print("index face         x         y         z              P           Wx              Wy              Wz")
 
         for index in range(start, end):
@@ -109,8 +104,6 @@ class CubeGFT:
                 f" {self.probabilities[index]:14.7e}"
                 # f" {dp_dx:15.7e} {dp_dy:15.7e} {dp_dz:15.7e}"
             )
-
-            
             wx, wy, wz = self.wvt[index]
             row += f" {wx:15.7e} {wy:15.7e} {wz:15.7e}"
 
