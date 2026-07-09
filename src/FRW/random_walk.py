@@ -55,7 +55,8 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
     try:
-        gft = CubeGFT.load("src/GGFT/data/cube_tables_n200.npz")
+        gft = CubeGFT.load("src/GGFT/data/cube_tables_n23.npz")
+        # gft.print_panels()
     except FileNotFoundError:
         print("GFT file not found. Please generate it first by running src/GGFT/generate_gft.sh [RESOLUTION]. Check the output file under src/GGFT/data/ for the generated GFT file.")
         exit(1)

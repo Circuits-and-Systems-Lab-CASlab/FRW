@@ -61,6 +61,60 @@ class CubeGFT:
             wvt=wvt,
             resolution=resolution,
         )
+        
+    #debug
+    def print_panels(
+        self,
+        start: int = 0,
+        end: int | None = None,
+    ) -> None:
+        """Print probability and derivatives for each selected panel.
+
+        By default, every panel is printed. Use ``start`` and ``end`` to print
+        only a smaller index range, for example ``print_panels(0, 20)``.
+        """
+        panel_count = len(self.probabilities)
+        if end is None:
+            end = panel_count
+
+        if not 0 <= start <= end <= panel_count:
+            raise ValueError(
+                f"Expected 0 <= start <= end <= {panel_count}"
+            )
+
+        print("index face         x         y         z              P           Wx              Wy              Wz")
+
+        for index in range(start, end):
+            x, y, z = self.panel_centers[index]
+            # dp_dx, dp_dy, dp_dz = self.gradients[index]
+
+            if np.isclose(x, -1.0):
+                face = "-X"
+            elif np.isclose(x, 1.0):
+                face = "+X"
+            elif np.isclose(y, -1.0):
+                face = "-Y"
+            elif np.isclose(y, 1.0):
+                face = "+Y"
+            elif np.isclose(z, -1.0):
+                face = "-Z"
+            elif np.isclose(z, 1.0):
+                face = "+Z"
+            else:
+                face = "??"
+
+            row = (
+                f"{index:5d} {face:>4s}"
+                f" {x:9.5f} {y:9.5f} {z:9.5f}"
+                f" {self.probabilities[index]:14.7e}"
+                # f" {dp_dx:15.7e} {dp_dy:15.7e} {dp_dz:15.7e}"
+            )
+
+            
+            wx, wy, wz = self.wvt[index]
+            row += f" {wx:15.7e} {wy:15.7e} {wz:15.7e}"
+
+            print(row)
 
     def sample_relative_point(self, rng: np.random.Generator, ) -> tuple[FloatArray, int, float]:
         """Return (relative point, panel index, panel probability)."""
