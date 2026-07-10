@@ -28,13 +28,13 @@ def _run_visual_walk(conductors, master_vgss, rng, max_hops=150):
     visual_kill_radius = sys_size * 5
 
 
-    gft = CubeGFT.load("src/gft/data/cube_gft_n200.npz")
+    gft = CubeGFT.load("src/GGFT/data/cube_gft_n200.npz")
 
     path_points = []
     maximal_cubes = []
     terminal = "Maximum hops reached"
 
-    current_p = sample_on_vgss(master_vgss.sampling_context, rng)
+    current_p = sample_on_vgss(master_vgss.sampling_context, rng).point
     path_points.append(current_p.copy())
 
     print("\n[VISUALIZATION WALK LOG]")
