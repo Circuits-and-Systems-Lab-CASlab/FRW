@@ -54,7 +54,7 @@ def test_touching_input_builds_one_vgss_for_c1_c2_c3() -> None:
     assert len(net_vgss.surfaces) == 3
 
     rng = np.random.default_rng(7)
-    point = sample_on_vgss(net_vgss.sampling_context, rng)
+    point = sample_on_vgss(net_vgss.sampling_context, rng).point
     _assert_point_is_valid_for_net(net_vgss, point)
 
 
@@ -86,7 +86,7 @@ def test_build_all_net_vgss_builds_and_samples_every_detected_net() -> None:
 
     for item in all_net_vgss:
         points = np.vstack(
-            [sample_on_vgss(item.sampling_context, rng) for _ in range(25)]
+            [sample_on_vgss(item.sampling_context, rng).point for _ in range(25)]
         )
         sampled_points[item.net.name] = points
         assert points.shape == (25, 3)
@@ -104,7 +104,7 @@ def test_all_net_vgss_visualization_is_saved(tmp_path: Path) -> None:
     rng = np.random.default_rng(2026)
     sampled_points = {
         item.net.name: np.vstack(
-            [sample_on_vgss(item.sampling_context, rng) for _ in range(10)]
+            [sample_on_vgss(item.sampling_context, rng).point for _ in range(10)]
         )
         for item in all_net_vgss
     }

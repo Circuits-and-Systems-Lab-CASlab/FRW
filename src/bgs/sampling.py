@@ -110,13 +110,15 @@ class VGSSSample:
 
 @dataclass
 class VGSSSamplingStats:
-    """Proposal statistics used to estimate the normalization H."""
+    """Statistics for the VGSS area, mean p(r), and H estimators."""
 
     proposal_count: int = 0
+    uniform_vgss_count: int = 0
     accepted_count: int = 0
     geometry_rejections: int = 0
     multiplicity_rejections: int = 0
     importance_rejections: int = 0
+    importance_value_sum: float = 0.0
 
     @property
     def rejection_count(self) -> int:
@@ -124,34 +126,69 @@ class VGSSSamplingStats:
 
     @property
     def acceptance_rate(self) -> float:
-        if self.proposal_count == 0: return 0.0
+        """Final Algorithm 4.1 acceptance rate, after p(r)/U rejection."""
+        if self.proposal_count == 0:
+            return 0.0
         return self.accepted_count / self.proposal_count
 
-    def estimate_Sg(self, context: VGSSSamplingContext) -> float:
-        """
-        Sg is the estimated area of the union of all BGS surfaces in one net, based on the acceptance rate.
-        """
-
+    @property
+    def geometric_acceptance_rate(self) -> float:
+        """Rate after geometry and multiplicity correction, before p(r)/U."""
         if self.proposal_count == 0:
-            raise ValueError("Sg cannot be estimated before any VGSS proposals.")
-        return (
-            context.total_component_area * self.acceptance_rate
-        )
+            return 0.0
+        return self.uniform_vgss_count / self.proposal_count
+
+    @property
+    def importance_acceptance_rate(self) -> float:
+        """Conditional acceptance rate of the p(r)/U rejection step."""
+
+        if self.uniform_vgss_count == 0:
+            return 0.0
+        return self.accepted_count / self.uniform_vgss_count
+
+    def estimate_surface_area(self, context: VGSSSamplingContext) -> float:
+        """Estimate the actual VGSS area Sg. Sg = A * N"""
+        if self.proposal_count == 0:
+            raise ValueError("S cannot be estimated before any VGSS proposals.")
+        return context.total_component_area * self.geometric_acceptance_rate
+
+    def estimate_Sg(self, context: VGSSSamplingContext) -> float:
+        """Backward-compatible function for estimate_surface_area()."""
+        return self.estimate_surface_area(context)
+
+    def estimate_mean_p(self) -> float:
+        """Estimate the statistical mean of p(r) over uniform VGSS samples."""
+        if self.uniform_vgss_count == 0:
+            raise ValueError("mean p(r) cannot be estimated before a uniform VGSS sample.")
+        return self.importance_value_sum / self.uniform_vgss_count
+
+    def estimate_H(self, context: VGSSSamplingContext) -> float:
+        """Estimate H = S * mean(p(r)) using the book's formulation."""
+        return self.estimate_surface_area(context) * self.estimate_mean_p()
 
     def as_dict(self, context: VGSSSamplingContext):
         """Return JSON-serializable sampling metadata."""
 
+        surface_area = self.estimate_surface_area(context)
+        mean_p = self.estimate_mean_p()
+        h_estimate = surface_area * mean_p
+
         return {
             "proposal_count": self.proposal_count,
+            "uniform_vgss_count": self.uniform_vgss_count,
             "accepted_count": self.accepted_count,
             "rejection_count": self.rejection_count,
             "geometry_rejections": self.geometry_rejections,
             "multiplicity_rejections": self.multiplicity_rejections,
             "importance_rejections": self.importance_rejections,
             "acceptance_rate": self.acceptance_rate,
+            "geometric_acceptance_rate": self.geometric_acceptance_rate,
+            "importance_acceptance_rate": self.importance_acceptance_rate,
             "upper_bound_U": context.upper_bound,
             "total_component_area": context.total_component_area,
-            "Sg_estimate": self.estimate_Sg(context),
+            "Sg_estimate": surface_area,
+            "mean_p": mean_p,
+            "H_estimate": h_estimate,
         }
 
 
@@ -163,6 +200,9 @@ def prepare_vgss_sampling(
     abs_tol: float = 1e-12,
 ) -> VGSSSamplingContext:
     """Validate and precompute one net's VGSS sampling context."""
+
+    if not math.isfinite(upper_bound) or upper_bound <= 0.0:
+        raise ValueError("upper_bound U must be finite and positive.")
 
     surface_tuple = tuple(surfaces)
     surface_areas = np.asarray(
@@ -184,7 +224,7 @@ def prepare_vgss_sampling(
         abs_tol=float(abs_tol),
     )
 
-def sample_on_vgss_with_details(
+def sample_on_vgss(
     context: VGSSSamplingContext,
     rng: np.random.Generator,
     *,
@@ -232,8 +272,20 @@ def sample_on_vgss_with_details(
                 stats.multiplicity_rejections += 1
             continue
 
+        # The point is now a uniform sample on the actual VGSS.  Record
+        # p(r) here, before the p(r)/U rejection, so that
+        # H = S * statistical_mean(p(r)) can be estimated directly.
+        importance_value = float(context.importance_function(point))
+        if not math.isfinite(importance_value) or importance_value < 0.0:
+            raise ValueError("p(r) must be finite and non-negative.")
+        if importance_value > context.upper_bound + context.abs_tol:
+            raise ValueError(f"p(r)={importance_value} exceeds upper bound U={context.upper_bound}.")
+
+        if stats is not None:
+            stats.uniform_vgss_count += 1
+            stats.importance_value_sum += importance_value
+
         # Step 7: importance rejection p(r)/U.
-        importance_value = context.importance_function(point)
         if x2 > importance_value / context.upper_bound:
             if stats is not None:
                 stats.importance_rejections += 1
@@ -253,15 +305,3 @@ def sample_on_vgss_with_details(
         "SampleOnVGSS did not accept a point within "
         f"{max_attempts} attempts. Check the BGS geometry, p(r), and U."
     )
-
-
-def sample_on_vgss(context: VGSSSamplingContext, rng: np.random.Generator, *, max_attempts: int = 10000, stats: VGSSSamplingStats | None = None, ) -> np.ndarray:
-    """only the accepted point r."""
-
-    sample = sample_on_vgss_with_details(
-        context,
-        rng,
-        max_attempts=max_attempts,
-        stats=stats,
-    )
-    return sample.point
