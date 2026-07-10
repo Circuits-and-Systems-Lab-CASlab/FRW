@@ -98,6 +98,16 @@ class VGSSSamplingContext:
     abs_tol: float
 
 
+@dataclass(frozen=True)
+class VGSSSample:
+    """Accepted VGSS point together with its exact source-face normal."""
+
+    point: np.ndarray
+    normal: np.ndarray
+    source_surface_index: int
+    face_direction: str
+
+
 @dataclass
 class VGSSSamplingStats:
     """Proposal statistics used to estimate the normalization H."""
@@ -174,22 +184,17 @@ def prepare_vgss_sampling(
         abs_tol=float(abs_tol),
     )
 
-def sample_on_vgss(
+def sample_on_vgss_with_details(
     context: VGSSSamplingContext,
     rng: np.random.Generator,
     *,
     max_attempts: int = 10000,
     stats: VGSSSamplingStats | None = None,
-) -> np.ndarray:
-    """
-    Implement Algorithm 4.1 and return only the accepted point r.
+) -> VGSSSample:
+    """Implement Algorithm 4.1 and return the accepted point and face normal."""
 
-    When ``stats`` is supplied, every raw proposal and rejection is recorded.
-    Reusing one stats object across many accepted points provides the data needed
-    to estimate the book's normalization H.
-    """
-
-    if max_attempts <= 0: raise ValueError("max_attempts must be positive.")
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive.")
 
     surfaces = context.surfaces
 
@@ -234,12 +239,29 @@ def sample_on_vgss(
                 stats.importance_rejections += 1
             continue
 
-        # Step 8.
+        # Step 8.  Keep the normal from the exact accepted VGSS face.
         if stats is not None:
             stats.accepted_count += 1
-        return point
+        return VGSSSample(
+            point=np.asarray(point, dtype=float).copy(),
+            normal=np.asarray(source_face.normal, dtype=float).copy(),
+            source_surface_index=source_surface_index,
+            face_direction=source_face.direction,
+        )
 
     raise RuntimeError(
         "SampleOnVGSS did not accept a point within "
         f"{max_attempts} attempts. Check the BGS geometry, p(r), and U."
     )
+
+
+def sample_on_vgss(context: VGSSSamplingContext, rng: np.random.Generator, *, max_attempts: int = 10000, stats: VGSSSamplingStats | None = None, ) -> np.ndarray:
+    """only the accepted point r."""
+
+    sample = sample_on_vgss_with_details(
+        context,
+        rng,
+        max_attempts=max_attempts,
+        stats=stats,
+    )
+    return sample.point

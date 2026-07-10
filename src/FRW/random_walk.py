@@ -1,6 +1,6 @@
 import numpy as np
 
-from bgs.sampling import VGSSSamplingStats, sample_on_vgss
+from bgs.sampling import VGSSSamplingStats, sample_on_vgss_with_details
 from GGFT.ggft import CubeGFT
 
 
@@ -61,15 +61,21 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
         print("GFT file not found. Please generate it first by running src/GGFT/generate_gft.sh [RESOLUTION]. Check the output file under src/GGFT/data/ for the generated GFT file.")
         exit(1)
 
+    for c in conductors:
+        c.capacitance=0.0
+    npath=0
+
     for walk in range(num_walks):
         percent_done = (walk + 1) / num_walks * 100.0
         print(f"\rProgress: {percent_done:.1f}% ({walk + 1}/{num_walks})", end="", flush=True)
 
-        current_p = sample_on_vgss(
+        start_sample = sample_on_vgss_with_details(
             master_vgss.sampling_context,
             rng,
             stats=sampling_stats,
         )
+        current_p = start_sample.point
+        surface_normal = start_sample.normal
         start_point = current_p.copy()
         current_walk_path = []
         hit_target = None
@@ -78,11 +84,15 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
         #_-----first transition------
         distances = [c.distance_to_point(current_p) for c in conductors]
         min_dist = min(distances)
-        nearest_idx = np.argmin(distances)
         side_a = 2 * min_dist
 
-        surface_normal = conductors[nearest_idx].get_surface_normal(current_p) #normal of face nearsest to point
-        next_point, panel_index, probability, omega = gft.sample_first_transition(start_point, min_dist, surface_normal, rng)
+        next_point, panel_index, probability, omega = gft.sample_first_transition(
+            start_point,
+            min_dist,
+            surface_normal,
+            rng,
+        )
+
         current_walk_path.append({
             "center": current_p.tolist(),
             "a": float(side_a),
@@ -110,22 +120,23 @@ def run_frw_geometry(conductors, master_vgss, rng, num_walks=1000, max_hops=150)
 
             if min_dist < 1e-4:
                 hit_target = conductors[nearest_idx].name
+                conductors[nearest_idx].capacitance += omega
                 break
 
             current_p, index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
-            # current_p = sample_point_on_maximal_cube(current_p, min_dist, rng)
-
-        #update omega weight array
-        conductors[nearest_idx].omega += omega
-        conductors[nearest_idx].num_hits +=1
-        conductors[nearest_idx].weight = conductors[nearest_idx].omega / conductors[nearest_idx].num_hits
 
         all_walk_data.append({
             "start_point": start_point.tolist(),
+            "start_normal": surface_normal.tolist(),
             "path_data": current_walk_path,
             "hit_conductor": hit_target,
-            "omega": conductors[nearest_idx].omega,
         })
+    
+    print("\n----------capacitances----------")
+    for c in conductors:
+        c.capacitance /= num_walks
+        print(f"Conductor {c.name} estimated capacitance: {c.capacitance:.6e}")
+    print("-------------------------------")
 
     return {
         "Sg": sampling_stats.estimate_Sg(master_vgss.sampling_context),
