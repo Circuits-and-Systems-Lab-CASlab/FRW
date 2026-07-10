@@ -19,6 +19,7 @@ class ConductorNet:
     index: int
     conductors: tuple[Conductor, ...]
 
+
     @property
     def name(self) -> str:
         return f"Net{self.index}"
@@ -102,10 +103,7 @@ def find_touching_nets(
     return tuple(nets)
 
 
-def find_net_containing(
-    nets: Sequence[ConductorNet],
-    conductor_name: str,
-) -> ConductorNet:
+def find_net_containing(nets: Sequence[ConductorNet], conductor_name: str, ) -> ConductorNet:
     """Return the net containing the named conductor."""
 
     for net in nets:

@@ -73,10 +73,7 @@ class Conductor:
     bounds: Bounds
     face_vertices: np.ndarray
     relative_permittivity: float | None = None
-    omega: float = 0.0
-    num_hits: int = 0
-    weight: float = 0.0
-
+    
     # Compatibility properties used by the original FRW implementation.
     @property
     def min_bounds(self) -> np.ndarray:
