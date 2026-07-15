@@ -21,14 +21,14 @@ from GGFT.ggft import CubeGFT
 # ==========================================
 
 
-def _run_visual_walk(conductors, master_vgss, rng, max_hops=150):
+def _run_visual_walk(conductors, master_vgss, rng, max_hops=5):
     """Run one small FRW example used only by the visualizations."""
 
     sys_center, sys_size = get_system_bounds(conductors)
     visual_kill_radius = sys_size * 5
 
 
-    gft = CubeGFT.load("src/GGFT/data/cube_gft_n200.npz")
+    gft = CubeGFT.load("src/GGFT/data/cube_tables_n200.npz")
 
     path_points = []
     maximal_cubes = []
@@ -415,7 +415,7 @@ def visualize_3d_walk(
     lighter Gaussian surfaces so the walk can be understood in full geometry.
     """
 
-    path_points, maximal_cubes, terminal = _run_visual_walk(conductors, master_vgss, rng, max_hops=max_hops)
+    path_points, maximal_cubes, terminal = _run_visual_walk(conductors, master_vgss, rng, max_hops=4)
 
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
     net_colors = _net_colors(net_vgss_collection)

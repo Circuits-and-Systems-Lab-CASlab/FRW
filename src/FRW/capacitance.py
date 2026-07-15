@@ -7,7 +7,7 @@ import numpy as np
 from bgs.topology import find_touching_nets
 
 E0 = 8.8541878128e-12
-L_UNIT = 1.0e-11
+L_UNIT = 1.0e0
 
 INFINITY_LABEL = "Infinity"
 
