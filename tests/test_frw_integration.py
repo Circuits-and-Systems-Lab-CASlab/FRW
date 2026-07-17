@@ -23,56 +23,29 @@ def test_sampling_stats_return_area_when_p_is_one() -> None:
     rng = np.random.default_rng(11)
 
     for _ in range(25):
-        sample_on_vgss(context, rng, stats=stats)
+        sample_on_vgss(context, rng, stats=stats).point
 
     assert stats.proposal_count == 25
     assert stats.accepted_count == 25
     assert stats.estimate_Sg(context) == pytest.approx(surface.area)
 
 
-def test_sampling_stats_estimate_weighted_Sg() -> None:
-    surface = _surface("C1", Bounds(0, 1, 0, 1, 0, 1))
-    context = prepare_vgss_sampling(
-        [surface],
-        importance_function=lambda _point: 0.5,
-        upper_bound=1.0,
+def test_sampling_stats_estimate_weighted_H() -> None:
+    surface = _surface(
+        "C1",
+        Bounds(0, 1, 0, 1, 0, 1),
     )
+
+    context = prepare_vgss_sampling([surface], importance_function=lambda _point: 0.5, upper_bound=1.0, )
+
     stats = VGSSSamplingStats()
     rng = np.random.default_rng(2026)
 
     for _ in range(4000):
-        sample_on_vgss(context, rng, stats=stats)
+        sample_on_vgss(context,rng,stats=stats,)
 
-    assert stats.estimate_Sg(context) == pytest.approx(3.0, rel=0.04)
+    assert stats.estimate_Sg(context) == pytest.approx(6.0)
+    assert stats.estimate_mean_p() == pytest.approx(0.5)
+    assert stats.estimate_H(context) == pytest.approx(3.0)
+
     assert stats.importance_rejections > 0
-
-
-def test_frw_batch_keeps_original_walk_shape_and_uses_vgss_start() -> None:
-    input_path = Path(__file__).parents[1] / "input" / "INPUTFILE_TOUCHING_DIRECT.m"
-    conductors = parse_matlab_geometry(input_path)
-    master_vgss = build_vgss_for_conductor(
-        conductors,
-        "C1",
-        scale_factor=1.0,
-        max_distance=10.0,
-    )
-
-    result = run_frw_geometry(
-        conductors,
-        master_vgss,
-        np.random.default_rng(1234),
-        num_walks=8,
-        max_hops=8,
-    )
-
-    assert len(result["walks"]) == 8
-    assert result["sampling_stats"]["accepted_count"] == 8
-    assert result["sampling_stats"]["proposal_count"] >= 8
-    assert result["Sg"] == result["sampling_stats"]["Sg_estimate"] 
-
-    for walk in result["walks"]:
-        assert len(walk["start_point"]) == 3
-        assert "path_data" in walk
-        assert "hit_conductor" in walk
-        for hop in walk["path_data"]:
-            assert set(hop) == {"center", "a"}

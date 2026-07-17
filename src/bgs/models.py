@@ -73,7 +73,7 @@ class Conductor:
     bounds: Bounds
     face_vertices: np.ndarray
     relative_permittivity: float | None = None
-
+    
     # Compatibility properties used by the original FRW implementation.
     @property
     def min_bounds(self) -> np.ndarray:
@@ -98,6 +98,36 @@ class Conductor:
             np.minimum(point, self.max_bounds),
         )
         return float(np.max(np.abs(point - clamped)))
+
+    def get_surface_normal(self, point: np.ndarray) -> np.ndarray:
+        """Return the outward-facing normal of the nearest face to a point."""
+
+        point = np.asarray(point, dtype=float)
+        distances = [
+            abs(point[0] - self.bounds.xmin),
+            abs(point[0] - self.bounds.xmax),
+            abs(point[1] - self.bounds.ymin),
+            abs(point[1] - self.bounds.ymax),
+            abs(point[2] - self.bounds.zmin),
+            abs(point[2] - self.bounds.zmax),
+        ]
+        nearest_face_index = int(np.argmin(distances))
+        direction = DIRECTIONS[nearest_face_index]
+
+        if direction == "PX":
+            return np.array([1.0, 0.0, 0.0], dtype=float)
+        elif direction == "NX":
+            return np.array([-1.0, 0.0, 0.0], dtype=float)
+        elif direction == "PY":
+            return np.array([0.0, 1.0, 0.0], dtype=float)
+        elif direction == "NY":
+            return np.array([0.0, -1.0, 0.0], dtype=float)
+        elif direction == "PZ":
+            return np.array([0.0, 0.0, 1.0], dtype=float)
+        elif direction == "NZ":
+            return np.array([0.0, 0.0, -1.0], dtype=float)
+        else:
+            raise ValueError(f"Unexpected face direction: {direction}")
 
 
 @dataclass 
