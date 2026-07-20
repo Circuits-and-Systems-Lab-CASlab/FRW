@@ -1,13 +1,20 @@
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
 
 from bgs.matlab_parser import parse_matlab_geometry
 from bgs.vgss import build_all_net_vgss
+from .capacitance import (
+    assemble_capacitance_matrix,
+    calculate_capacitance_row,
+    print_capacitance_matrix,
+    print_capacitance_row,
+)
+from .metrics import calculate_frw_metrics, print_metrics
 from .random_walk import run_frw_geometry
 from .visualization import visualize_3d_walk
-from .metrics import calculate_frw_metrics, print_metrics
 
 
 def _select_master_vgss(all_net_vgss, master_name: str | None = None):
@@ -21,13 +28,19 @@ def _select_master_vgss(all_net_vgss, master_name: str | None = None):
         if getattr(net_vgss.net, "name", None) == master_name:
             return net_vgss
 
-    available_names = ", ".join(getattr(net_vgss.net, "name", "<unknown>") for net_vgss in all_net_vgss)
-    raise ValueError(f"Master net '{master_name}' was not found. Available nets: {available_names}")
+    available_names = ", ".join(
+        getattr(net_vgss.net, "name", "<unknown>")
+        for net_vgss in all_net_vgss
+    )
+    raise ValueError(
+        f"Master net {master_name!r} was not found. "
+        f"Available nets: {available_names}"
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the FRW geometric sampler on a MATLAB-style conductor input file."
+        description="Run FRW on a MATLAB-style conductor input file."
     )
     parser.add_argument(
         "input_file",
@@ -44,13 +57,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-distance",
         type=float,
         default=10.0,
-        help="Maximum distance fallback for VGSS used only when no finite distance to another non-touching conductor can be found. Default: 10.0.",
+        help=(
+            "Maximum-distance fallback for VGSS generation. "
+            "Default: 10.0."
+        ),
     )
     parser.add_argument(
         "--walks",
         type=int,
         default=5000,
-        help="Number of random walks to perform. Default: 5000.",
+        help="Number of random walks to perform per master net. Default: 5000.",
     )
     parser.add_argument(
         "--seed",
@@ -62,20 +78,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=Path("output") / "frw_exported_data.json",
-        help="Path to export the FRW walk data JSON. Default: output/frw_exported_data.json",
+        help=(
+            "Path to export FRW and capacitance data. "
+            "Default: output/frw_exported_data.json"
+        ),
     )
-    group = parser.add_mutually_exclusive_group() #(--master | --all)
+
+    group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--master",
         type=str,
         default=None,
-        help="Name of the VGSS net to use as the master (for example: C1). Default: the first net.",
+        help="VGSS net name to use as master, for example Net1.",
     )
     group.add_argument(
         "--all",
         action="store_true",
-        help="Run FRW for every generated net instead of a single selected master net.",
+        help="Run FRW for every net and assemble the full matrix.",
     )
+
     parser.add_argument(
         "--no-visualization",
         action="store_true",
@@ -94,7 +115,7 @@ if __name__ == "__main__":
     try:
         system_conductors = parse_matlab_geometry(filename)
     except FileNotFoundError:
-        print(f"ERROR: Could not find '{filename}'")
+        print(f"ERROR: Could not find {filename!s}")
         raise SystemExit(1)
 
     if not system_conductors:
@@ -111,25 +132,27 @@ if __name__ == "__main__":
 
     if args.all:
         nets_to_run = all_net_vgss
-        export_target = []
     else:
-        master_vgss = _select_master_vgss(all_net_vgss, args.master)
-        nets_to_run = [master_vgss]
-        export_target = None
+        nets_to_run = [_select_master_vgss(all_net_vgss, args.master)]
 
     results = []
+    capacitance_rows = []
+
     for master_vgss in nets_to_run:
         print("-" * 60)
         print("\nExecuting Batch Geometric Walk Engine...")
         print(f"Master Net: {master_vgss.net.name}")
-        print(f"Conductors: {', '.join(master_vgss.net.conductor_names)}")
+        print("Conductors: " + ", ".join(master_vgss.net.conductor_names))
         print("-" * 30)
 
-
         if not args.no_visualization:
-            visualize_3d_walk(system_conductors, master_vgss, rng, all_net_vgss)
+            visualize_3d_walk(
+                system_conductors,
+                master_vgss,
+                rng,
+                all_net_vgss,
+            )
 
-        #actual FRW
         export_data = run_frw_geometry(
             system_conductors,
             master_vgss,
@@ -137,25 +160,52 @@ if __name__ == "__main__":
             num_walks=args.walks,
         )
 
-        print(f"Total Walks Completed: {len(export_data['walks'])}")
-        print(f"Estimated Sg: {export_data['Sg']:.6f}")
+        metrics = calculate_frw_metrics(
+            export_data["walks"],
+            system_conductors,
+            master_vgss,
+        )
+        export_data["metrics"] = metrics
+        # print_metrics(metrics)
 
-        #get metrics
-        export_data["metrics"] = calculate_frw_metrics(export_data["walks"], system_conductors, master_vgss)
-        print_metrics(export_data["metrics"])
+        capacitance_row = calculate_capacitance_row(
+            export_data["walks"],
+            export_data["H"],
+            system_conductors,
+            master_vgss,
+        )
+        export_data["capacitance"] = capacitance_row
+        capacitance_rows.append(capacitance_row)
+        # print_capacitance_row(capacitance_row)
+
         results.append(export_data)
 
+    #-----------capacitance----------
+    matrix_result = None
+    if args.all:
+        nets=[net_vgss.net.name for net_vgss in all_net_vgss]
+        matrix_result = assemble_capacitance_matrix( capacitance_rows, nets, )
+        print_capacitance_matrix(matrix_result)
+
+    if args.all:
+        export_payload = {
+            "capacitance_matrix": matrix_result,
+            "net_results": results,
+        }
+    else:
+        export_payload = results[0]
 
     output_filename = args.output
     output_filename.parent.mkdir(parents=True, exist_ok=True)
-    print(f"\nExporting all walk data to {output_filename}...")
+    print(f"\nExporting results to {output_filename}...")
 
-    with open(output_filename, "w") as outfile:
-        import json
-        json.dump(results[0] if export_target is None else results, outfile, indent=4)
+    with open(output_filename, "w", encoding="utf-8") as outfile:
+        json.dump(export_payload, outfile, indent=4)
 
     if args.all:
-        print(f"Success! Data for {args.walks} walks successfully saved for {len(results)} nets.")
+        print(
+            f"Success! Saved {args.walks} walks for "
+            f"{len(results)} master nets."
+        )
     else:
-        print(f"Success! Data for {args.walks} walks successfully saved.")
-
+        print(f"Success! Saved {args.walks} walks.")
