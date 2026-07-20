@@ -98,7 +98,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _sample_points(net_vgss, count: int, rng: np.random.Generator) -> np.ndarray:
     return np.vstack(
         [
-            sample_on_vgss(net_vgss.sampling_context, rng)
+            sample_on_vgss(net_vgss.sampling_context, rng).point
             for _ in range(count)
         ]
     )

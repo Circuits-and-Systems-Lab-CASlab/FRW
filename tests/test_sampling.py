@@ -35,7 +35,7 @@ def test_single_bgs_returns_a_surface_point() -> None:
     context = prepare_vgss_sampling([only_surface])
     rng = np.random.default_rng(1234)
 
-    point = sample_on_vgss(context, rng)
+    point = sample_on_vgss(context, rng).point
 
     assert point.shape == (3,)
     assert point_on_surface(only_surface, point)
@@ -57,7 +57,7 @@ def test_internal_opposite_face_is_rejected_before_external_face_is_returned() -
         ],
     )
 
-    point = sample_on_vgss(context, rng)
+    point = sample_on_vgss(context, rng).point
 
     assert np.allclose(point, [0.0, 0.5, 0.5])
 
@@ -79,6 +79,6 @@ def test_nc_correction_can_reject_then_accept_identical_surfaces() -> None:
         ],
     )
 
-    point = sample_on_vgss(context, rng)
+    point = sample_on_vgss(context, rng).point
 
     assert np.allclose(point, [1.0, 0.5, 0.5])
