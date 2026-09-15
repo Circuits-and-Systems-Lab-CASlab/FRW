@@ -84,23 +84,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    parser.add_argument(
         "--master",
         type=str,
         default=None,
-        help="VGSS net name to use as master, for example Net1.",
-    )
-    group.add_argument(
-        "--all",
-        action="store_true",
-        help="Run FRW for every net and assemble the full matrix.",
+        help=(
+            "Run only this VGSS net as master, for example Net1. "
+            "If omitted, run every net and assemble the full matrix."
+        ),
     )
 
     parser.add_argument(
-        "--no-visualization",
+        "--visualization",
         action="store_true",
-        help="Disable 3D visualization of the geometry and VGSS.",
+        help="Show a 3D visualization of one saved walk per master net.",
     )
 
     return parser
@@ -130,10 +127,12 @@ if __name__ == "__main__":
 
     rng = np.random.default_rng(args.seed)
 
-    if args.all:
-        nets_to_run = all_net_vgss
-    else:
-        nets_to_run = [_select_master_vgss(all_net_vgss, args.master)]
+    run_all_nets = args.master is None
+    nets_to_run = (
+        all_net_vgss
+        if run_all_nets
+        else [_select_master_vgss(all_net_vgss, args.master)]
+    )
 
     results = []
     capacitance_rows = []
@@ -152,7 +151,7 @@ if __name__ == "__main__":
             num_walks=args.walks,
         )
 
-        if not args.no_visualization:
+        if args.visualization:
             path_points, maximal_cubes, terminal = extract_walk_trace(
                 export_data["walks"][0]
             )
@@ -187,12 +186,12 @@ if __name__ == "__main__":
 
     #-----------capacitance----------
     matrix_result = None
-    if args.all:
+    if run_all_nets:
         nets=[net_vgss.net.name for net_vgss in all_net_vgss]
         matrix_result = assemble_capacitance_matrix( capacitance_rows, nets, )
         print_capacitance_matrix(matrix_result)
 
-    if args.all:
+    if run_all_nets:
         export_payload = {
             "capacitance_matrix": matrix_result,
             "net_results": results,
@@ -207,7 +206,7 @@ if __name__ == "__main__":
     with open(output_filename, "w", encoding="utf-8") as outfile:
         json.dump(export_payload, outfile, indent=4)
 
-    if args.all:
+    if run_all_nets:
         print(
             f"Success! Saved {args.walks} walks for "
             f"{len(results)} master nets."
