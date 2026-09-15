@@ -23,7 +23,7 @@ git check-ignore -v diagnostics/frw_isolated_sphere_capacitance_diagnostic.py
 Smoke test
 ----------
 python3 diagnostics/frw_isolated_sphere_capacitance_diagnostic.py \
-  --table src/GGFT/data/cube_tables_n200.npz \
+  --table src/GGFT/data/cube_tables_n201.npz \
   --sphere-radius 1.0 \
   --bgs-half-size-factors 1.25 \
   --samples-per-face-per-seed 100 \
@@ -38,7 +38,7 @@ python3 diagnostics/frw_isolated_sphere_capacitance_diagnostic.py \
 Focused main run
 ----------------
 python3 diagnostics/frw_isolated_sphere_capacitance_diagnostic.py \
-  --table src/GGFT/data/cube_tables_n200.npz \
+  --table src/GGFT/data/cube_tables_n201.npz \
   --sphere-radius 1.0 \
   --bgs-half-size-factors 1.25 \
   --samples-per-face-per-seed 5000 \
@@ -56,7 +56,7 @@ Optional BGS-invariance run
 Run this only if the focused result shows a significant discrepancy:
 
 python3 diagnostics/frw_isolated_sphere_capacitance_diagnostic.py \
-  --table src/GGFT/data/cube_tables_n200.npz \
+  --table src/GGFT/data/cube_tables_n201.npz \
   --sphere-radius 1.0 \
   --bgs-half-size-factors 1.25 2.0 4.0 \
   --samples-per-face-per-seed 2500 \

@@ -11,59 +11,32 @@ from matplotlib.lines import Line2D
 from matplotlib.widgets import CheckButtons
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from bgs.sampling import sample_on_vgss
-from .random_walk import get_system_bounds, sample_point_on_maximal_cube
-from GGFT.ggft import CubeGFT
-
 
 # ==========================================
 # SHARED VISUALIZATION HELPERS
 # ==========================================
 
 
-def _run_visual_walk(conductors, master_vgss, rng, max_hops=5):
-    """Run one small FRW example used only by the visualizations."""
+def extract_walk_trace(walk_data):
+    """Convert one saved solver walk into visualization-ready geometry."""
 
-    sys_center, sys_size = get_system_bounds(conductors)
-    visual_kill_radius = sys_size * 5
+    path_data = walk_data.get("path_data", [])
+    path_points = [step["center"] for step in path_data]
 
+    start_point = walk_data.get("start_point")
+    if start_point is not None and (
+        not path_points
+        or not np.allclose(path_points[0], start_point, rtol=0.0, atol=1.0e-12)
+    ):
+        path_points.insert(0, start_point)
 
-    gft = CubeGFT.load("src/GGFT/data/cube_tables_n200.npz")
-
-    path_points = []
-    maximal_cubes = []
-    terminal = "Maximum hops reached"
-
-    current_p = sample_on_vgss(master_vgss.sampling_context, rng).point
-    path_points.append(current_p.copy())
-
-    print("\n[VISUALIZATION WALK LOG]")
-    probability = 1
-    for hop in range(max_hops):
-        if np.max(np.abs(current_p - sys_center)) > visual_kill_radius:
-            terminal = "Infinity (Ground)"
-            print("TERMINATED: Escaped to Infinity (Ground)")
-            break
-
-        distances = [c.distance_to_point(current_p) for c in conductors]
-        nearest_idx = int(np.argmin(distances))
-        min_dist = float(distances[nearest_idx])
-        maximal_cubes.append((current_p.copy(), min_dist))
-
-        print(
-            f"Hop {hop + 1}: Center = "
-            f"[{current_p[0]:.4f}, {current_p[1]:.4f}, {current_p[2]:.4f}], "
-            f"\ta = {2 * min_dist:.4f}"
-            f"\tP(r,r') = {probability}"
-        )
-
-        if min_dist < 1e-4:
-            terminal = conductors[nearest_idx].name
-            print(f"TERMINATED ON: {terminal}")
-            break
-
-        current_p, index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
-        path_points.append(current_p.copy())
+    maximal_cubes = [
+        (step["center"], float(step["a"]) / 2.0)
+        for step in path_data
+    ]
+    terminal = walk_data.get("hit_conductor")
+    if terminal is None:
+        terminal = walk_data.get("termination", "Unknown")
 
     return np.asarray(path_points, dtype=float), maximal_cubes, terminal
 
@@ -214,22 +187,20 @@ def _save_or_show(figure, save_path=None, show=True):
 # 2D VISUALIZATION
 # ==========================================
 
-
 def visualize_2d_walk(
     conductors,
     master_vgss,
-    rng,
+    path_points,
+    maximal_cubes,
+    terminal,
     all_net_vgss=None,
     *,
-    max_hops=100,
     save_path=None,
     show=True,
 ):
     """Plot one visual FRW walk in the XY, XZ, and YZ projections."""
+    path_points = np.asarray(path_points, dtype=float)
 
-    path_points, maximal_cubes, terminal = _run_visual_walk(
-        conductors, master_vgss, rng, max_hops=max_hops
-    )
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
     net_colors = _net_colors(net_vgss_collection)
     master_net_name = master_vgss.net.name
@@ -297,6 +268,7 @@ def visualize_2d_walk(
                 bound_pairs.append((surface.min_bounds, surface.max_bounds))
 
         for center, radius in maximal_cubes:
+            center = np.asarray(center, dtype=float)
             lower = center[[first, second]] - radius
             rect = patches.Rectangle(
                 lower,
@@ -311,49 +283,50 @@ def visualize_2d_walk(
             ax.add_patch(rect)
             cube_patches.append(rect)
 
-        line = ax.plot(
-            path_points[:, first],
-            path_points[:, second],
-            color="0.08",
-            marker="o",
-            markersize=4,
-            linewidth=1.7,
-            zorder=5,
-        )[0]
-        start = ax.scatter(
-            path_points[0, first],
-            path_points[0, second],
-            marker="*",
-            s=150,
-            color="tab:green",
-            edgecolor="black",
-            linewidth=0.7,
-            zorder=7,
-        )
-        end = ax.scatter(
-            path_points[-1, first],
-            path_points[-1, second],
-            marker="X",
-            s=100,
-            color="crimson",
-            edgecolor="black",
-            linewidth=0.6,
-            zorder=7,
-        )
-        path_artists.extend([line, start, end])
-
-        for hop_index, point in enumerate(path_points):
-            label = ax.annotate(
-                str(hop_index),
-                (point[first], point[second]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=7,
-                color="0.2",
-                visible=False,
-                zorder=8,
+        if len(path_points) > 0:
+            line = ax.plot(
+                path_points[:, first],
+                path_points[:, second],
+                color="0.08",
+                marker="o",
+                markersize=4,
+                linewidth=1.7,
+                zorder=5,
+            )[0]
+            start = ax.scatter(
+                path_points[0, first],
+                path_points[0, second],
+                marker="*",
+                s=150,
+                color="tab:green",
+                edgecolor="black",
+                linewidth=0.7,
+                zorder=7,
             )
-            hop_labels.append(label)
+            end = ax.scatter(
+                path_points[-1, first],
+                path_points[-1, second],
+                marker="X",
+                s=100,
+                color="crimson",
+                edgecolor="black",
+                linewidth=0.6,
+                zorder=7,
+            )
+            path_artists.extend([line, start, end])
+
+            for hop_index, point in enumerate(path_points):
+                label = ax.annotate(
+                    str(hop_index),
+                    (point[first], point[second]),
+                    xytext=(4, 4),
+                    textcoords="offset points",
+                    fontsize=7,
+                    color="0.2",
+                    visible=False,
+                    zorder=8,
+                )
+                hop_labels.append(label)
 
         _set_2d_limits(ax, first, second, bound_pairs, path_points)
 
@@ -397,25 +370,21 @@ def visualize_2d_walk(
 # 3D VISUALIZATION
 # ==========================================
 
-
 def visualize_3d_walk(
     conductors,
     master_vgss,
-    rng,
+    path_points,
+    maximal_cubes,
+    terminal,
     all_net_vgss=None,
     *,
-    max_hops=100,
     save_path=None,
     show=True,
 ):
     """
     Plot one representative FRW path together with every generated VGSS.
-
-    The selected master net is emphasized. Other nets remain visible with
-    lighter Gaussian surfaces so the walk can be understood in full geometry.
     """
-
-    path_points, maximal_cubes, terminal = _run_visual_walk(conductors, master_vgss, rng, max_hops=4)
+    path_points = np.asarray(path_points, dtype=float)
 
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
     net_colors = _net_colors(net_vgss_collection)
@@ -509,6 +478,7 @@ def visualize_3d_walk(
         )
 
     for center, radius in maximal_cubes:
+        center = np.asarray(center, dtype=float)
         cube_min = center - radius
         cube_max = center + radius
         collection = draw_cuboid(
@@ -524,57 +494,59 @@ def visualize_3d_walk(
         collection.set_visible(False)
         cube_collections.append(collection)
 
-    path_line = ax.plot(
-        path_points[:, 0],
-        path_points[:, 1],
-        path_points[:, 2],
-        color="0.08",
-        marker="o",
-        markersize=4.5,
-        linewidth=2.0,
-        label="Walk path",
-        zorder=8,
-    )[0]
-    start_marker = ax.scatter(
-        path_points[0, 0],
-        path_points[0, 1],
-        path_points[0, 2],
-        color="tab:green",
-        edgecolor="black",
-        linewidth=0.7,
-        s=170,
-        marker="*",
-        depthshade=False,
-        label="VGSS start",
-        zorder=10,
-    )
-    terminal_marker = ax.scatter(
-        path_points[-1, 0],
-        path_points[-1, 1],
-        path_points[-1, 2],
-        color="crimson",
-        edgecolor="black",
-        linewidth=0.7,
-        s=115,
-        marker="X",
-        depthshade=False,
-        label=f"Terminal: {terminal}",
-        zorder=10,
-    )
-    path_artists = [path_line, start_marker, terminal_marker]
-
-    for hop_index, point in enumerate(path_points):
-        label = ax.text(
-            point[0],
-            point[1],
-            point[2],
-            f" {hop_index}",
-            fontsize=7,
-            color="0.15",
-            visible=False,
-            zorder=11,
+    path_artists = []
+    if len(path_points) > 0:
+        path_line = ax.plot(
+            path_points[:, 0],
+            path_points[:, 1],
+            path_points[:, 2],
+            color="0.08",
+            marker="o",
+            markersize=4.5,
+            linewidth=2.0,
+            label="Walk path",
+            zorder=8,
+        )[0]
+        start_marker = ax.scatter(
+            path_points[0, 0],
+            path_points[0, 1],
+            path_points[0, 2],
+            color="tab:green",
+            edgecolor="black",
+            linewidth=0.7,
+            s=170,
+            marker="*",
+            depthshade=False,
+            label="VGSS start",
+            zorder=10,
         )
-        hop_labels.append(label)
+        terminal_marker = ax.scatter(
+            path_points[-1, 0],
+            path_points[-1, 1],
+            path_points[-1, 2],
+            color="crimson",
+            edgecolor="black",
+            linewidth=0.7,
+            s=115,
+            marker="X",
+            depthshade=False,
+            label=f"Terminal: {terminal}",
+            zorder=10,
+        )
+        path_artists = [path_line, start_marker, terminal_marker]
+
+        for hop_index, point in enumerate(path_points):
+            label = ax.text(
+                point[0],
+                point[1],
+                point[2],
+                f" {hop_index}",
+                fontsize=7,
+                color="0.15",
+                visible=False,
+                zorder=11,
+            )
+            hop_labels.append(label)
 
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
@@ -625,10 +597,17 @@ def visualize_3d_walk(
 
     info_text = (
         f"Master net: {master_net_name}\n"
-        f"Start: [{path_points[0, 0]:.3f}, {path_points[0, 1]:.3f}, {path_points[0, 2]:.3f}]\n"
         f"Hops: {len(maximal_cubes)}\n"
         f"Result: {terminal}"
     )
+    if len(path_points) > 0:
+        info_text = (
+            f"Master net: {master_net_name}\n"
+            f"Start: [{path_points[0, 0]:.3f}, {path_points[0, 1]:.3f}, {path_points[0, 2]:.3f}]\n"
+            f"Hops: {len(maximal_cubes)}\n"
+            f"Result: {terminal}"
+        )
+
     ax.text2D(
         0.73,
         0.03,

@@ -14,7 +14,7 @@ from .capacitance import (
 )
 from .metrics import calculate_frw_metrics, print_metrics
 from .random_walk import run_frw_geometry
-from .visualization import visualize_3d_walk
+from .visualization import extract_walk_trace, visualize_3d_walk
 
 
 def _select_master_vgss(all_net_vgss, master_name: str | None = None):
@@ -145,20 +145,25 @@ if __name__ == "__main__":
         print("Conductors: " + ", ".join(master_vgss.net.conductor_names))
         print("-" * 30)
 
-        if not args.no_visualization:
-            visualize_3d_walk(
-                system_conductors,
-                master_vgss,
-                rng,
-                all_net_vgss,
-            )
-
         export_data = run_frw_geometry(
             system_conductors,
             master_vgss,
             rng,
             num_walks=args.walks,
         )
+
+        if not args.no_visualization:
+            path_points, maximal_cubes, terminal = extract_walk_trace(
+                export_data["walks"][0]
+            )
+            visualize_3d_walk(
+                system_conductors,
+                master_vgss,
+                path_points,
+                maximal_cubes,
+                terminal,
+                all_net_vgss,
+            )
 
         metrics = calculate_frw_metrics(
             export_data["walks"],

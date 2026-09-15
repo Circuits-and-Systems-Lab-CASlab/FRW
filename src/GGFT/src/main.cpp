@@ -115,6 +115,12 @@ int main(int argc, char** argv) {
         if (options.block_width <= 0 || options.resolution % options.block_width != 0) {
             throw std::invalid_argument( "block width must be positive and divide resolution");
         }
+        if (options.resolution % 2 == 0) {
+            std::cerr
+                << "Warning: an even resolution has no cell centred exactly at "
+                << "the reference-cube source. Prefer an odd resolution (for "
+                << "example 201 instead of 200).\n";
+        }
 
         const int dielectric_resolution = options.resolution / options.block_width;
         const std::size_t dielectric_count =

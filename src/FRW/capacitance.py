@@ -55,9 +55,13 @@ def calculate_capacitance_row(walks: Sequence[Mapping], H: float, conductors, ma
     geometric_factor = H / num_walks
     physical_factor = E0 * L_UNIT * geometric_factor
 
+    geometric_row = {
+        net_name: geometric_factor * net_weight_sum
+        for net_name, net_weight_sum in weight_sum.items()
+    }
     capacitance_row = {
-        net_name: physical_factor * weight_sum
-        for net_name, weight_sum in weight_sum.items()
+        net_name: E0 * L_UNIT * geometric_value
+        for net_name, geometric_value in geometric_row.items()
     }
 
     geometric_infinity = geometric_factor * infinity_weight_sum
@@ -76,6 +80,7 @@ def calculate_capacitance_row(walks: Sequence[Mapping], H: float, conductors, ma
         "L_UNIT": L_UNIT,
         "raw_weight_sums":  weight_sum,
         "infinity_weight_sum": float(infinity_weight_sum),
+        "geometric_row": geometric_row,
         "capacitance_row_F": capacitance_row,
         "geometric_infinity": float(geometric_infinity),
         "infinity_capacitance_F": float(infinity_capacitance),
@@ -180,4 +185,3 @@ def print_capacitance_matrix(matrix_result: Mapping) -> None:
         "Relative symmetry error: "
         f"{matrix_result['relative_asymmetry']:.3e}"
     )
-

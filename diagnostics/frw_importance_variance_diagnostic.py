@@ -277,7 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--table",
         type=Path,
-        default=Path("src/GGFT/data/cube_tables_n200.npz"),
+        default=Path("src/GGFT/data/cube_tables_n201.npz"),
     )
     parser.add_argument("--walks-per-seed", type=int, default=2500)
     parser.add_argument(

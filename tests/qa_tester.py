@@ -21,7 +21,7 @@ from bgs.matlab_parser import parse_matlab_geometry
 from bgs.vgss import build_all_net_vgss
 from FRW.random_walk import run_frw_geometry
 from FRW.metrics import calculate_frw_metrics
-from FRW.visualization import visualize_3d_walk
+from FRW.visualization import extract_walk_trace, visualize_3d_walk
 
 # ==========================================
 # CONFIGURATION 
@@ -76,9 +76,16 @@ def execute_frw_task(task_payload):
         # 3. Headless Visualization Rendering
         if not no_plots:
             plot_filename = f"{Path(input_filename).stem}_{net_vgss.net.name}_SF{sf}_S{seed}_W{walks}.png"
-            vis_rng = np.random.default_rng(seed) 
+            path_points, maximal_cubes, terminal = extract_walk_trace(
+                export_data["walks"][0]
+            )
             visualize_3d_walk(
-                conductors, net_vgss, vis_rng, all_net_vgss_list, 
+                conductors,
+                net_vgss,
+                path_points,
+                maximal_cubes,
+                terminal,
+                all_net_vgss_list,
                 save_path=PLOTS_DIR / plot_filename, show=False
             )
 

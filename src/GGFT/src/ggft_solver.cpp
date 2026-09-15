@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -166,8 +167,9 @@ void GGFTSolver::apply_operator(
                 };
                 const auto add_boundary = [&]() {
                     // Outside of the reference cube is a zero-Dirichlet boundary.
-                    // The boundary-face conductance is epsilon_self.
-                    diagonal += epsilon_self;
+                    // A cell-centred unknown is h/2 from the boundary, so its
+                    // boundary-face conductance is 2*epsilon_self.
+                    diagonal += 2.0 * epsilon_self;
                 };
 
                 i > 0 ? add_neighbour(i - 1, j, k) : add_boundary();
@@ -376,7 +378,8 @@ std::vector<double> GGFTSolver::extract_boundary_flux(
     values.reserve(6 * panels_per_face);
 
     const auto flux = [&](int i, int j, int k) {
-        return dielectric_at(i, j, k) * green_values[index(i, j, k)];
+        // Match the h/2 boundary distance used in add_boundary().
+        return 2.0 * dielectric_at(i, j, k) * green_values[index(i, j, k)];
     };
 
     // z-
@@ -458,25 +461,25 @@ GGFTResult GGFTSolver::solve_all(double relative_tolerance, int max_iterations )
     result.block_width = block_width_;
     result.reference_half_size = 1.0;
     result.dielectric = dielectric_;
-    std::out << "solving GFT..." << std::endl;
+    std::cout << "solving GFT..." << std::endl;
     result.probabilities = solve(
         KernelType::Probability,
         relative_tolerance,
         max_iterations
     );
-    std::out << "solving gradient x..." << std::endl;
+    std::cout << "solving gradient x..." << std::endl;
     result.gradient_x = solve(
         KernelType::GradientX,
         relative_tolerance,
         max_iterations
     );
-    std::out << "solving gradient y..." << std::endl;
+    std::cout << "solving gradient y..." << std::endl;
     result.gradient_y = solve(
         KernelType::GradientY,
         relative_tolerance,
         max_iterations
     );
-    std::out << "solving gradient z..." << std::endl;
+    std::cout << "solving gradient z..." << std::endl;
     result.gradient_z = solve(
         KernelType::GradientZ,
         relative_tolerance,
