@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import as_file, files
+import math
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,22 @@ from numpy.typing import NDArray
 
 FloatArray = NDArray[np.float64]
 DEFAULT_GFT_TABLE = "cube_tables_n201.npz"
+STANDARD_FIRST_TRANSITION = "standard"
+STRATIFIED_FIRST_TRANSITION = "stratified"
+FIRST_TRANSITION_MODES = (
+    STANDARD_FIRST_TRANSITION,
+    STRATIFIED_FIRST_TRANSITION,
+)
+FIRST_TRANSITION_STRATA = ("inward", "outward")
+
+
+@dataclass(frozen=True)
+class _FirstTransitionStratum:
+    """Cached derivative-importance distribution for one geometric half."""
+
+    panel_indices: NDArray[np.int32]
+    cdf: FloatArray
+    absolute_mass: float
 
 
 @dataclass(frozen=True)
@@ -21,6 +38,9 @@ class CubeGFT:
     panel_centers: FloatArray
     wvt: FloatArray
     resolution: int
+    _first_transition_strata: dict[
+        tuple[int, int, str], _FirstTransitionStratum
+    ] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
     def load(cls, path: str | Path) -> "CubeGFT":
@@ -138,6 +158,91 @@ class CubeGFT:
         #next point, index, probability
         return ( self.panel_centers[index].copy(), index, float(self.probabilities[index]), )
 
+    @staticmethod
+    def _axis_normal(
+        surface_normal: FloatArray,
+    ) -> tuple[FloatArray, int, int]:
+        """Return a validated axis-aligned unit normal and cache key."""
+
+        normal = np.asarray(surface_normal, dtype=np.float64)
+        if normal.shape != (3,) or not np.all(np.isfinite(normal)):
+            raise ValueError("surface_normal must contain three finite values")
+
+        normal_length = float(np.linalg.norm(normal))
+        if not math.isfinite(normal_length) or normal_length <= 0.0:
+            raise ValueError("surface_normal must be non-zero")
+
+        unit_normal = normal / normal_length
+        axis = int(np.argmax(np.abs(unit_normal)))
+        direction = 1 if unit_normal[axis] > 0.0 else -1
+        expected = np.zeros(3, dtype=np.float64)
+        expected[axis] = direction
+        if not np.allclose(unit_normal, expected, rtol=0.0, atol=1.0e-12):
+            raise ValueError(
+                "Stratified first transitions require an axis-aligned "
+                "Gaussian-surface normal."
+            )
+
+        return expected, axis, direction
+
+    def _get_first_transition_stratum(
+        self,
+        surface_normal: FloatArray,
+        stratum: str,
+    ) -> tuple[_FirstTransitionStratum, FloatArray]:
+        """Build or return one geometric half-cube proposal distribution.
+
+        Panels are sampled in proportion to ``abs(-n.grad(P_j))``.  The
+        proposal deliberately retains panels whose derivative sign differs
+        from the usual homogeneous inward/outward sign, which keeps the
+        estimator valid for future asymmetric dielectric GGFT tables.
+        """
+
+        if stratum not in FIRST_TRANSITION_STRATA:
+            choices = ", ".join(FIRST_TRANSITION_STRATA)
+            raise ValueError(f"stratum must be one of: {choices}")
+
+        unit_normal, axis, direction = self._axis_normal(surface_normal)
+        cache_key = (axis, direction, stratum)
+        cached = self._first_transition_strata.get(cache_key)
+        if cached is not None:
+            return cached, unit_normal
+
+        signed_derivative = -self.probabilities * (
+            self.wvt @ unit_normal
+        )
+        signed_coordinate = self.panel_centers @ unit_normal
+
+        # Assign the splitting plane to the inward half.  Its derivative is
+        # zero for a homogeneous symmetric cube, but it need not be zero for
+        # a future dielectric table, so it must not be discarded.
+        geometric_mask = (
+            signed_coordinate <= 0.0
+            if stratum == "inward"
+            else signed_coordinate > 0.0
+        )
+        candidate_indices = np.flatnonzero(geometric_mask)
+        weights = np.abs(signed_derivative[candidate_indices])
+        positive = weights > 0.0
+        panel_indices = candidate_indices[positive].astype(np.int32, copy=False)
+        weights = weights[positive]
+
+        absolute_mass = float(weights.sum())
+        if not math.isfinite(absolute_mass) or absolute_mass <= 0.0:
+            raise ValueError(
+                f"The GGFT {stratum} stratum has no finite derivative mass."
+            )
+
+        cdf = np.cumsum(weights / absolute_mass, dtype=np.float64)
+        cdf[-1] = 1.0
+        cached = _FirstTransitionStratum(
+            panel_indices=panel_indices,
+            cdf=cdf,
+            absolute_mass=absolute_mass,
+        )
+        self._first_transition_strata[cache_key] = cached
+        return cached, unit_normal
+
     def sample_next_point(self, current_point: FloatArray, cube_half_size: float, rng: np.random.Generator, ) -> tuple[FloatArray, int, float]:
         """Map a sampled unit-cube point onto an axis-aligned physical cube."""
 
@@ -168,17 +273,66 @@ class CubeGFT:
         cube_half_size: float,
         surface_normal: FloatArray,
         rng: np.random.Generator,
+        *,
+        mode: str = STANDARD_FIRST_TRANSITION,
+        stratum: str | None = None,
+        allocation_probability: float | None = None,
     ) -> tuple[FloatArray, int, float, float]:
-        """Return (next point, panel index, panel probability, omega)."""
-        next_point, panel_index, probability = self.sample_next_point(
-            current_point=current_point,
-            cube_half_size=cube_half_size,
-            rng=rng,
+        """Return ``(next point, panel index, sampling probability, omega)``.
+        Stratified calls select a geometric half and sample by absolute derivative mass.
+        """
+
+        if mode not in FIRST_TRANSITION_MODES:
+            choices = ", ".join(FIRST_TRANSITION_MODES)
+            raise ValueError(f"mode must be one of: {choices}")
+
+        if mode == STANDARD_FIRST_TRANSITION:
+            next_point, panel_index, probability = self.sample_next_point(
+                current_point=current_point,
+                cube_half_size=cube_half_size,
+                rng=rng,
+            )
+            omega = self.first_hop_weight(
+                panel_index=panel_index,
+                surface_normal=surface_normal,
+                cube_half_size=cube_half_size,
+            )
+            return next_point, panel_index, probability, omega
+
+        #--------stratified first transition--------
+        if not math.isfinite(cube_half_size) or cube_half_size <= 0.0:
+            raise ValueError("cube_half_size must be finite and positive")
+        if stratum is None:
+            raise ValueError("stratum is required in stratified mode")
+        if allocation_probability is None:
+            raise ValueError("allocation_probability is required in stratified mode")
+        if ( not math.isfinite(allocation_probability) or not 0.0 < allocation_probability <= 1.0):
+            raise ValueError("allocation_probability must be finite and in (0, 1]")
+
+        #alternate stratum
+
+        # Split panels into inward/outward halves and sample within each half
+        # proportionally to |d_j|, where d_j = -P_j * (n · WVT_j).
+        # The corrected weight sign(d_j) * A_s / (alpha_s * a) preserves the
+        # standard estimator's expected value while reducing variance.
+        table, unit_normal = self._get_first_transition_stratum(
+            surface_normal,
+            stratum,
         )
-        omega = self.first_hop_weight(
-            panel_index=panel_index,
-            surface_normal=surface_normal,
-            cube_half_size=cube_half_size,
+        local_index = int(np.searchsorted(table.cdf, float(rng.random()), side="right"))
+        panel_index = int(table.panel_indices[local_index])
+        relative_point = self.panel_centers[panel_index]
+        current_point = np.asarray(current_point, dtype=np.float64)
+        next_point = current_point + cube_half_size * relative_point
+
+        signed_derivative = -float(
+            np.dot(unit_normal, self.probabilities[panel_index] * self.wvt[panel_index],)
+        )
+        probability = abs(signed_derivative) / table.absolute_mass
+        omega = (
+            math.copysign(table.absolute_mass, signed_derivative)
+            / allocation_probability
+            / cube_half_size
         )
 
         return next_point, panel_index, probability, omega

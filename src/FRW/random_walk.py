@@ -1,7 +1,12 @@
 import numpy as np
 
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
-from GGFT.ggft import CubeGFT
+from GGFT.ggft import (
+    FIRST_TRANSITION_MODES,
+    STANDARD_FIRST_TRANSITION,
+    STRATIFIED_FIRST_TRANSITION,
+    CubeGFT,
+)
 
 
 # ==========================================
@@ -60,6 +65,7 @@ def run_frw_geometry(
     rng,
     num_walks=1000,
     max_hops=200,
+    first_transition_mode=STANDARD_FIRST_TRANSITION,
 ):
     """Run FRW paths and return raw walk data.
 
@@ -67,6 +73,20 @@ def run_frw_geometry(
     ``omega`` and the terminal condition are stored for post-processing by
     ``FRW.capacitance``.
     """
+    if num_walks <= 0:
+        raise ValueError("num_walks must be a positive integer.")
+    if first_transition_mode not in FIRST_TRANSITION_MODES:
+        choices = ", ".join(FIRST_TRANSITION_MODES)
+        raise ValueError(f"first_transition_mode must be one of: {choices}")
+    if (
+        first_transition_mode == STRATIFIED_FIRST_TRANSITION
+        and num_walks % 2 != 0
+    ):
+        raise ValueError(
+            "Stratified first-transition sampling requires an even number "
+            "of walks for exact inward/outward allocation."
+        )
+
     sys_center, sys_size = get_system_bounds(conductors)
     math_kill_radius = sys_size * 500_000.0
 
@@ -97,18 +117,41 @@ def run_frw_geometry(
         min_dist = min(distances)
         side_a = 2 * min_dist
 
+        first_transition_stratum = None
+        allocation_probability = None
+        if first_transition_mode == STRATIFIED_FIRST_TRANSITION:
+            first_transition_stratum = ("inward" if walk % 2 == 0 else "outward")
+            allocation_probability = 0.5
+
         next_point, panel_index, probability, omega = gft.sample_first_transition(
             start_point,
             min_dist,
             surface_normal,
             rng,
+            mode=first_transition_mode,
+            stratum=first_transition_stratum,
+            allocation_probability=allocation_probability,
         )
 
-        current_walk_path.append({
-                "center": current_p.tolist(),
-                "a": float(side_a),
-                "P(r,r')": float(probability), }
-        )
+        table_probability = float(gft.probabilities[panel_index])
+        first_path_record = {
+            "center": current_p.tolist(),
+            "a": float(side_a),
+            "P(r,r')": table_probability,
+        }
+        if first_transition_mode == STRATIFIED_FIRST_TRANSITION:
+            first_path_record.update(
+                {
+                    "sampling_probability": float(probability),
+                    "first_transition_stratum": first_transition_stratum,
+                }
+            )
+        current_walk_path.append(first_path_record)
+
+        # Later diagnostic records retain the physical GGFT probability of
+        # the transition that selected their centre.  In stratified mode the
+        # first proposal probability is stored separately above.
+        probability = table_probability
         current_p = next_point
 
         # ---------- remaining transitions ----------
@@ -144,6 +187,8 @@ def run_frw_geometry(
                 "start_point": start_point.tolist(),
                 "start_normal": surface_normal.tolist(),
                 "first_panel_index": int(panel_index),
+                "first_transition_mode": first_transition_mode,
+                "first_transition_stratum": first_transition_stratum,
                 "omega": float(omega),
                 "path_data": current_walk_path,
                 "hit_conductor": hit_target,
@@ -162,6 +207,7 @@ def run_frw_geometry(
         "mean_p": sampling_stats.estimate_mean_p(),
         "H": h_estimate,
         "sampling_stats": sampling_stats.as_dict(context),
+        "first_transition_mode": first_transition_mode,
         "walks": all_walk_data,
     }
 

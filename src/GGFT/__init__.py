@@ -1,5 +1,19 @@
 """GGFT table loading and sampling."""
 
-from .ggft import DEFAULT_GFT_TABLE, CubeGFT
+from .ggft import (
+    DEFAULT_GFT_TABLE,
+    FIRST_TRANSITION_MODES,
+    FIRST_TRANSITION_STRATA,
+    STANDARD_FIRST_TRANSITION,
+    STRATIFIED_FIRST_TRANSITION,
+    CubeGFT,
+)
 
-__all__ = ["CubeGFT", "DEFAULT_GFT_TABLE"]
+__all__ = [
+    "CubeGFT",
+    "DEFAULT_GFT_TABLE",
+    "FIRST_TRANSITION_MODES",
+    "FIRST_TRANSITION_STRATA",
+    "STANDARD_FIRST_TRANSITION",
+    "STRATIFIED_FIRST_TRANSITION",
+]
