@@ -411,7 +411,10 @@ The `sampled_points` dictionary must be keyed by net name, for example `Net1`.
 
 # FRW integration
 
-The FRW implementation keeps its original maximal-cube walk logic. The integration changes only the source of the initial point: every walk begins from a fresh point accepted by `SampleOnVGSS`.
+The FRW implementation keeps its original maximal-cube walk logic. Every walk
+begins from a fresh point accepted by `SampleOnVGSS`. The first cube supports
+both the original transition and derivative-importance stratification through
+the same `sample_first_transition()` method.
 
 ## Run FRW for one selected net
 
@@ -445,6 +448,25 @@ print(result["H"])
 print(result["sampling_stats"])
 ```
 
+The Python API defaults to `first_transition_mode="standard"`, preserving the
+original behavior. Opt in to balanced stratification with:
+
+```python
+result = run_frw_geometry(
+    conductors,
+    master_vgss,
+    np.random.default_rng(1234),
+    num_walks=5000,
+    first_transition_mode="stratified",
+)
+```
+
+Stratified mode assigns half the walks to the inward geometric half of the
+first cube and half to the outward half, so `num_walks` must be even. Within
+each half, panels are sampled in proportion to the absolute normal derivative.
+The weight retains the sampled panel's derivative sign; this does not assume a
+homogeneous or sign-symmetric table.
+
 ## Run FRW for every detected net
 
 ```python
@@ -475,6 +497,7 @@ results = {
 ```python
 {
     "H": H_estimate,
+    "first_transition_mode": "standard_or_stratified",
     "sampling_stats": {
         "proposal_count": ...,
         "accepted_count": ...,
@@ -490,6 +513,8 @@ results = {
     "walks": [
         {
             "start_point": [x, y, z],
+            "first_transition_mode": "standard_or_stratified",
+            "first_transition_stratum": "inward_outward_or_null",
             "path_data": [
                 {
                     "center": [x, y, z],
@@ -596,11 +621,19 @@ python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
     --max-distance 10 \
     --walks 5000 \
     --seed 1234 \
-    --output output/frw_exported_data.json \
-    --no-visualization
+    --output output/frw_exported_data.json
 ```
 
-The FRW command-line interface currently selects the first detected net. Use the Python API when a different net or every net must be processed.
+The CLI uses balanced stratified first transitions, so `--walks` must be a
+positive even number. If `--master` is omitted, it runs every detected net and
+assembles the full capacitance matrix. Use `--master Net1` to run only one row.
+Visualization is disabled by default; add `--visualization` to display one
+saved walk for each master net.
+
+The Python API remains backward compatible and defaults to the standard first
+transition. To revert the CLI itself to standard sampling, change its
+`first_transition_mode="stratified"` call to `"standard"`; the GGFT API and
+standard implementation remain intact.
 
 # Parameters
 

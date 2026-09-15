@@ -66,7 +66,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--walks",
         type=int,
         default=5000,
-        help="Number of random walks to perform per master net. Default: 5000.",
+        help=(
+            "Positive even number of random walks per master net. "
+            "Default: 5000."
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -104,7 +107,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.walks <= 0 or args.walks % 2 != 0:
+        parser.error(
+            "--walks must be a positive even integer when the CLI uses "
+            "stratified first-transition sampling"
+        )
 
     filename = args.input_file
     print(f"Reading geometry from {filename}...\n")
@@ -149,6 +158,7 @@ if __name__ == "__main__":
             master_vgss,
             rng,
             num_walks=args.walks,
+            first_transition_mode="stratified",
         )
 
         if args.visualization:
