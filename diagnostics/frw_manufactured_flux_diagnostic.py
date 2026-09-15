@@ -114,7 +114,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("input_file", type=Path)
     p.add_argument("--master", default="Net3")
     p.add_argument(
-        "--table", type=Path, default=Path("src/GGFT/data/cube_tables_n200.npz")
+        "--table", type=Path, default=Path("src/GGFT/data/cube_tables_n201.npz")
     )
     p.add_argument(
         "--bgs-scale-factors", type=float, nargs="+", default=[1.0, 1.25, 2.0]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import as_file, files
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ from numpy.typing import NDArray
 
 
 FloatArray = NDArray[np.float64]
+DEFAULT_GFT_TABLE = "cube_tables_n201.npz"
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,25 @@ class CubeGFT:
             wvt=wvt,
             resolution=resolution,
         )
+
+    @classmethod
+    def load_default(cls) -> "CubeGFT":
+        """Load the production GGFT table bundled with this package.
+
+        The resource lookup is independent of the process working directory,
+        so installed commands and Python API calls use the same table.
+        """
+
+        resource = files("GGFT").joinpath("data", DEFAULT_GFT_TABLE)
+        try:
+            with as_file(resource) as table_path:
+                return cls.load(table_path)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Bundled GFT table {DEFAULT_GFT_TABLE!r} was not found. "
+                "Generate it with src/GGFT/generate_gft.sh 201 or "
+                "reinstall the project."
+            ) from exc
         
     #debug
     def print_panels(self, start: int = 0, end: int | None = None, ) -> None:

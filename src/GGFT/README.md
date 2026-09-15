@@ -29,8 +29,8 @@ gft/
 ├── tests/
 │   └── test_tables.py
 ├── data/
-│   ├── cube_tables_n23.bin
-│   └── cube_tables_n23.npz
+│   ├── cube_tables_n201.bin
+│   └── cube_tables_n201.npz
 ├── extract_binary.py       # binary -> validated NPZ + WVT
 ├── ggft.py                 # runtime sampling and first-hop weight API
 ├── generate_gft.sh
@@ -73,7 +73,7 @@ data/cube_tables_n31.npz
 make
 
 ./bin/ggft \
-  --output data/cube_tables_n23.bin \
+  --output data/cube_tables_n201.bin \
   --resolution 23 \
   --block-width 1 \
   --tolerance 1e-10 \
@@ -117,7 +117,7 @@ gft::GGFTResult tables = solver.solve_all();
 // tables.gradient_y
 // tables.gradient_z
 
-solver.write_binary("data/cube_tables_n23.bin", tables);
+solver.write_binary("data/cube_tables_n201.bin", tables);
 ```
 
 All four panel arrays have the same order:
@@ -155,7 +155,7 @@ Load once:
 ```python
 from ggft import CubeTransitionTables
 
-tables = CubeTransitionTables.load("data/cube_tables_n23.npz")
+tables = CubeTransitionTables.load("data/cube_tables_n201.npz")
 ```
 
 Sample a normal transition:

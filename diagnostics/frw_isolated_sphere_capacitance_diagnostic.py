@@ -123,7 +123,7 @@ class PathResult:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--table", type=Path, default=Path("src/GGFT/data/cube_tables_n200.npz"))
+    p.add_argument("--table", type=Path, default=Path("src/GGFT/data/cube_tables_n201.npz"))
     p.add_argument("--sphere-radius", type=float, default=1.0)
     p.add_argument(
         "--bgs-half-size-factors", type=float, nargs="+", default=[1.25, 2.0, 4.0],

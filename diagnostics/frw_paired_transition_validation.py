@@ -283,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--table",
         type=Path,
-        default=Path("src/GGFT/data/cube_tables_n200.npz"),
+        default=Path("src/GGFT/data/cube_tables_n201.npz"),
         help="Numerical GGFT NPZ table. Default: n200 bundled table.",
     )
     parser.add_argument(

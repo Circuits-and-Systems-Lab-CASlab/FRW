@@ -113,7 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--table",
-        default="src/GGFT/data/cube_tables_n200.npz",
+        default="src/GGFT/data/cube_tables_n201.npz",
         help="Numerical GGFT .npz table.",
     )
     parser.add_argument(

@@ -178,7 +178,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--table",
         type=Path,
-        default=Path("src/GGFT/data/cube_tables_n200.npz"),
+        default=Path("src/GGFT/data/cube_tables_n201.npz"),
     )
     p.add_argument(
         "--cube-scales",

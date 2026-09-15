@@ -35,7 +35,7 @@ Smoke test
 ----------
 
   python3 diagnostics/frw_cube_harmonic_measure_diagnostic.py \
-      --table src/GGFT/data/cube_tables_n200.npz \
+      --table src/GGFT/data/cube_tables_n201.npz \
       --walks-per-seed 500 \
       --seeds 1234 \
       --sources center off_axis near_face \
@@ -50,7 +50,7 @@ Main run
 --------
 
   python3 diagnostics/frw_cube_harmonic_measure_diagnostic.py \
-      --table src/GGFT/data/cube_tables_n200.npz \
+      --table src/GGFT/data/cube_tables_n201.npz \
       --walks-per-seed 20000 \
       --seeds 1234 5678 9012 3456 \
       --series-terms 41 \

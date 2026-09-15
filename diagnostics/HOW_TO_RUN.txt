@@ -8,7 +8,7 @@ python3 diagnostics/frw_math_diagnostic.py <path_to_geometry.m> \
 
 2. Independent GGFT and WVT Validation
 python3 diagnostics/ggft_wvt_validation.py \
-    --tables src/GGFT/data/cube_tables_n200.npz \
+    --tables src/GGFT/data/cube_tables_n201.npz \
     --series-terms 41 \
     --plots \
     --output-dir output/diagnostics/ggft_wvt_validation
@@ -35,7 +35,7 @@ python3 diagnostics/frw_importance_variance_diagnostic.py \
 
 5. Paired Transition Validation (Numerical vs. Analytical)
 python3 diagnostics/frw_paired_transition_validation.py <path_to_geometry.m> \
-    --table src/GGFT/data/cube_tables_n200.npz \
+    --table src/GGFT/data/cube_tables_n201.npz \
     --series-terms 41 \
     --walks-per-seed 5000 \
     --seeds 1234 5678 9012 3456 \

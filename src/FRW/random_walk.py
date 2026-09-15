@@ -73,12 +73,7 @@ def run_frw_geometry(
     all_walk_data = []
     sampling_stats = VGSSSamplingStats()
 
-    try:
-        gft = CubeGFT.load("src/GGFT/data/cube_tables_n200.npz")
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            "GFT file not found. Generate it with src/GGFT/generate_gft.sh [RESOLUTION] and place the resulting table under src/GGFT/data/."
-        ) from exc
+    gft = CubeGFT.load_default()
 
     for walk in range(num_walks):
         percent_done = (walk + 1) / num_walks * 100.0
