@@ -1,5 +1,6 @@
 import argparse
 import json
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -89,7 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-walks",
         type=int,
         default=1_000_000,
-        help="Maximum adaptive walks per row. Default: 1.000.000.",
+        help="Maximum adaptive walks per row. Default: 1000000.",
     )
     parser.add_argument(
         "--check-every",
@@ -134,49 +135,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show a 3D visualization of one saved walk per master net.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help=(
+            "Maximum number of master-net rows to run in parallel. "
+            "The actual count is limited by the number of selected rows. "
+            "Default: 4."
+        ),
+    )
 
     return parser
-
-
-def _execution_settings(args) -> dict:
-    if args.seed < 0:
-        raise ValueError("--seed must be non-negative")
-
-    if args.walks is not None:
-        if args.walks <= 0 or args.walks % 2 != 0:
-            raise ValueError("--walks must be a positive even integer")
-        return {
-            "adaptive": False,
-            "walk_limit": args.walks,
-            "minimum_walks": None,
-            "check_every": None,
-            "relative_tolerance": None,
-            "minimum_target_hits": None,
-        }
-
-    even_positive = {
-        "--min-walks": args.min_walks,
-        "--max-walks": args.max_walks,
-        "--check-every": args.check_every,
-    }
-    for name, value in even_positive.items():
-        if value <= 0 or value % 2 != 0:
-            raise ValueError(f"{name} must be a positive even integer")
-    if args.min_walks > args.max_walks:
-        raise ValueError("--min-walks cannot exceed --max-walks")
-    if not np.isfinite(args.tolerance) or args.tolerance <= 0.0:
-        raise ValueError("--tolerance must be finite and positive")
-    if args.min_hits < 0:
-        raise ValueError("--min-hits must be non-negative")
-
-    return {
-        "adaptive": True,
-        "walk_limit": args.max_walks,
-        "minimum_walks": args.min_walks,
-        "check_every": args.check_every,
-        "relative_tolerance": args.tolerance,
-        "minimum_target_hits": args.min_hits,
-    }
 
 
 def _row_rng(seed: int, row_index: int) -> np.random.Generator:
@@ -185,13 +155,198 @@ def _row_rng(seed: int, row_index: int) -> np.random.Generator:
     return np.random.default_rng(np.random.SeedSequence([seed, row_index]))
 
 
-if __name__ == "__main__":
+def _worker_count(requested_workers: int, row_count: int) -> int:
+    """Do not create more worker processes than there are rows to run."""
+
+    return min(requested_workers, row_count)
+
+
+def _run_master_row(
+    conductors,
+    master_vgss,
+    *,
+    row_index: int,
+    seed: int,
+    adaptive: bool,
+    walk_limit: int,
+    minimum_walks: int | None,
+    check_every: int | None,
+    relative_tolerance: float | None,
+    minimum_target_hits: int | None,
+    record_visualization: bool,
+) -> dict:
+    """Calculate one independently sampled capacitance-matrix row."""
+
+    rng = _row_rng(seed, row_index)
+    gft = CubeGFT.load_default()
+    system_center, system_size = get_system_bounds(conductors)
+    math_kill_radius = system_size * 500_000.0
+    first_transition_mode = STRATIFIED_FIRST_TRANSITION
+
+    sampling_stats = VGSSSamplingStats()
+    capacitance_accumulator = CapacitanceRowAccumulator(
+        conductors,
+        master_vgss,
+        first_transition_mode=first_transition_mode,
+    )
+    metrics_accumulator = MetricsAccumulator(conductors, master_vgss)
+    visualization_outcome = None
+    convergence_result = None
+    convergence_checks = 0
+    stop_reason = "maximum_walks" if adaptive else "fixed_walk_count"
+
+    for walk_index in range(walk_limit):
+        record_path = record_visualization and walk_index == 0
+        outcome = run_one_walk(
+            conductors=conductors,
+            master_vgss=master_vgss,
+            gft=gft,
+            rng=rng,
+            walk_index=walk_index,
+            sampling_stats=sampling_stats,
+            system_center=system_center,
+            math_kill_radius=math_kill_radius,
+            first_transition_mode=first_transition_mode,
+            record_path=record_path,
+        )
+        sample_completed = capacitance_accumulator.update(outcome)
+        metrics_accumulator.update(outcome)
+
+        if record_path:
+            visualization_outcome = outcome
+
+        if not adaptive or not sample_completed:
+            continue
+
+        completed_walks = capacitance_accumulator.walk_count
+        
+        # Determine whether to check convergence at this point.
+        should_check = (completed_walks >= minimum_walks and ( completed_walks % check_every == 0 or completed_walks == walk_limit ) )
+        if not should_check:
+            continue
+
+        convergence_result = check_row_convergence(
+            capacitance_accumulator.statistics(),
+            relative_tolerance=relative_tolerance,
+            minimum_target_hits=minimum_target_hits,
+        )
+        convergence_checks += 1
+        if convergence_result["converged"]:
+            stop_reason = "converged"
+            break
+
+    if adaptive:
+        if convergence_result is None:
+            convergence_result = check_row_convergence(
+                capacitance_accumulator.statistics(),
+                relative_tolerance=relative_tolerance,
+                minimum_target_hits=minimum_target_hits,
+            )
+        convergence = {
+            "enabled": True,
+            "stop_reason": stop_reason,
+            "walks_used": capacitance_accumulator.walk_count,
+            "pair_samples": capacitance_accumulator.sample_count,
+            "minimum_walks": minimum_walks,
+            "maximum_walks": walk_limit,
+            "check_every": check_every,
+            "checks_performed": convergence_checks,
+            **convergence_result,
+        }
+    else:
+        convergence = {
+            "enabled": False,
+            "converged": None,
+            "stop_reason": stop_reason,
+            "walks_used": capacitance_accumulator.walk_count,
+            "pair_samples": capacitance_accumulator.sample_count,
+        }
+
+    context = master_vgss.sampling_context
+    h_estimate = sampling_stats.estimate_H(context)
+    capacitance_row = capacitance_accumulator.finalize(h_estimate)
+    capacitance_row["convergence"] = convergence
+    metrics = metrics_accumulator.finalize()
+
+    export_data = {
+        "master_net": master_vgss.net.name,
+        "num_walks": capacitance_accumulator.walk_count,
+        "Sg": sampling_stats.estimate_surface_area(context),
+        "mean_p": sampling_stats.estimate_mean_p(),
+        "H": h_estimate,
+        "sampling_stats": sampling_stats.as_dict(context),
+        "first_transition_mode": first_transition_mode,
+        "convergence": convergence,
+        "metrics": metrics,
+        "capacitance": capacitance_row,
+    }
+    if visualization_outcome is not None:
+        export_data["visualization_walk"] = visualization_outcome.as_dict()
+
+    return {
+        "row_index": row_index,
+        "master_net": master_vgss.net.name,
+        "capacitance_row": capacitance_row,
+        "export_data": export_data,
+    }
+
+
+def _print_row_progress(completed: int, total: int, row_result: dict) -> None:
+    convergence = row_result["export_data"]["convergence"]
+    walks = convergence["walks_used"]
+    master_net = row_result["master_net"]
+
+    if not convergence["enabled"]:
+        details = f"fixed count, {walks:,} walks"
+    else:
+        ratio = convergence["final_ratio"]
+        ratio_text = "n/a" if ratio is None else f"{ratio:.3e}"
+        status = "converged" if convergence["converged"] else "maximum walks"
+        details = f"{status}, {walks:,} walks, ratio={ratio_text}"
+
+    print(f"[{completed}/{total}] {master_net}: {details}")
+
+
+def main(argv=None) -> None:
     parser = _build_parser()
-    args = parser.parse_args()
-    try:
-        execution = _execution_settings(args)
-    except ValueError as exc:
-        parser.error(str(exc))
+    args = parser.parse_args(argv)
+
+    if args.seed < 0:
+        parser.error("--seed must be non-negative")
+    if args.workers <= 0:
+        parser.error("--workers must be positive")
+
+    if args.walks is not None:
+        if args.walks <= 0 or args.walks % 2 != 0:
+            parser.error("--walks must be a positive even integer")
+        adaptive = False
+        walk_limit = args.walks
+        minimum_walks = None
+        check_every = None
+        relative_tolerance = None
+        minimum_target_hits = None
+    else:
+        even_positive = {
+            "--min-walks": args.min_walks,
+            "--max-walks": args.max_walks,
+            "--check-every": args.check_every,
+        }
+        for name, value in even_positive.items():
+            if value <= 0 or value % 2 != 0:
+                parser.error(f"{name} must be a positive even integer")
+        if args.min_walks > args.max_walks:
+            parser.error("--min-walks cannot exceed --max-walks")
+        if not np.isfinite(args.tolerance) or args.tolerance <= 0.0:
+            parser.error("--tolerance must be finite and positive")
+        if args.min_hits < 0:
+            parser.error("--min-hits must be non-negative")
+
+        adaptive = True
+        walk_limit = args.max_walks
+        minimum_walks = args.min_walks
+        check_every = args.check_every
+        relative_tolerance = args.tolerance
+        minimum_target_hits = args.min_hits
 
     filename = args.input_file
     print(f"Reading geometry from {filename}...\n")
@@ -212,11 +367,6 @@ if __name__ == "__main__":
         max_distance=args.max_distance,
     )
 
-    gft = CubeGFT.load_default()
-    system_center, system_size = get_system_bounds(system_conductors)
-    math_kill_radius = system_size * 500_000.0
-    first_transition_mode = STRATIFIED_FIRST_TRANSITION
-
     run_all_nets = args.master is None
     nets_to_run = (
         all_net_vgss
@@ -224,176 +374,106 @@ if __name__ == "__main__":
         else [_select_master_vgss(all_net_vgss, args.master)]
     )
 
-    results = []
-    capacitance_rows = []
     net_indices = {
         net_vgss.net.name: index
         for index, net_vgss in enumerate(all_net_vgss)
     }
+    row_count = len(nets_to_run)
+    active_workers = _worker_count(args.workers, row_count)
+    row_results = {}
 
-    for master_vgss in nets_to_run:
-        print("-" * 60)
-        print("\nExecuting Online Geometric Walk Engine...")
-        print(f"Master Net: {master_vgss.net.name}")
-        print("Conductors: " + ", ".join(master_vgss.net.conductor_names))
-        print("-" * 30)
-
-        row_index = net_indices[master_vgss.net.name]
-        rng = _row_rng(args.seed, row_index)
-
-        sampling_stats = VGSSSamplingStats()
-        capacitance_accumulator = CapacitanceRowAccumulator(
-            system_conductors,
-            master_vgss,
-            first_transition_mode=first_transition_mode,
+    print("\nExecuting Online Geometric Walk Engine...")
+    if active_workers == 1:
+        print(f"Running {row_count} row(s) sequentially.\n")
+        for completed, master_vgss in enumerate(nets_to_run, start=1):
+            row_index = net_indices[master_vgss.net.name]
+            result = _run_master_row(
+                system_conductors,
+                master_vgss,
+                row_index=row_index,
+                seed=args.seed,
+                adaptive=adaptive,
+                walk_limit=walk_limit,
+                minimum_walks=minimum_walks,
+                check_every=check_every,
+                relative_tolerance=relative_tolerance,
+                minimum_target_hits=minimum_target_hits,
+                record_visualization=args.visualization,
+            )
+            row_results[row_index] = result
+            _print_row_progress(completed, row_count, result)
+    else:
+        print(
+            f"Running {row_count} rows with "
+            f"{active_workers} worker processes.\n"
         )
-        metrics_accumulator = MetricsAccumulator(
-            system_conductors,
-            master_vgss,
-        )
-        visualization_outcome = None
-        convergence_result = None
-        convergence_checks = 0
-        stop_reason = (
-            "maximum_walks" if execution["adaptive"] else "fixed_walk_count"
-        )
-
-        for walk_index in range(execution["walk_limit"]):
-            percent_done = (
-                (walk_index + 1) / execution["walk_limit"] * 100.0
-            )
-            print(
-                f"\rProgress: {percent_done:.1f}% "
-                f"({walk_index + 1}/{execution['walk_limit']})",
-                end="",
-                flush=True,
-            )
-
-            record_path = args.visualization and walk_index == 0
-            outcome = run_one_walk(
-                conductors=system_conductors,
-                master_vgss=master_vgss,
-                gft=gft,
-                rng=rng,
-                walk_index=walk_index,
-                sampling_stats=sampling_stats,
-                system_center=system_center,
-                math_kill_radius=math_kill_radius,
-                first_transition_mode=first_transition_mode,
-                record_path=record_path,
-            )
-            sample_completed = capacitance_accumulator.update(outcome)
-            metrics_accumulator.update(outcome)
-
-            if record_path:
-                visualization_outcome = outcome
-
-            if not execution["adaptive"] or not sample_completed:
-                continue
-
-            completed_walks = capacitance_accumulator.walk_count
-
-            #check convergence
-            should_check = (
-                completed_walks >= execution["minimum_walks"] and ( completed_walks % execution["check_every"] == 0 or completed_walks == execution["walk_limit"] )
-            )
-            if not should_check:
-                continue
-
-            convergence_result = check_row_convergence(
-                capacitance_accumulator.statistics(),
-                relative_tolerance=execution["relative_tolerance"],
-                minimum_target_hits=execution["minimum_target_hits"],
-            )
-            convergence_checks += 1
-            if convergence_result["converged"]:
-                stop_reason = "converged"
-                break
-
-        print()
-
-        if execution["adaptive"]:
-            if convergence_result is None:
-                convergence_result = check_row_convergence(
-                    capacitance_accumulator.statistics(),
-                    relative_tolerance=execution["relative_tolerance"],
-                    minimum_target_hits=execution["minimum_target_hits"],
+        with ProcessPoolExecutor(max_workers=active_workers) as executor:
+            future_to_net = {}
+            for master_vgss in nets_to_run:
+                row_index = net_indices[master_vgss.net.name]
+                future = executor.submit(
+                    _run_master_row,
+                    system_conductors,
+                    master_vgss,
+                    row_index=row_index,
+                    seed=args.seed,
+                    adaptive=adaptive,
+                    walk_limit=walk_limit,
+                    minimum_walks=minimum_walks,
+                    check_every=check_every,
+                    relative_tolerance=relative_tolerance,
+                    minimum_target_hits=minimum_target_hits,
+                    record_visualization=args.visualization,
                 )
-            convergence = {
-                "enabled": True,
-                "stop_reason": stop_reason,
-                "walks_used": capacitance_accumulator.walk_count,
-                "pair_samples": capacitance_accumulator.sample_count,
-                "minimum_walks": execution["minimum_walks"],
-                "maximum_walks": execution["walk_limit"],
-                "check_every": execution["check_every"],
-                "checks_performed": convergence_checks,
-                **convergence_result,
-            }
-        else:
-            convergence = {
-                "enabled": False,
-                "converged": None,
-                "stop_reason": stop_reason,
-                "walks_used": capacitance_accumulator.walk_count,
-                "pair_samples": capacitance_accumulator.sample_count,
-            }
+                future_to_net[future] = master_vgss.net.name
 
-        if convergence["enabled"]:
-            if convergence["converged"]:
-                print(
-                    "Converged after "
-                    f"{convergence['walks_used']} walks "
-                    f"(ratio={convergence['final_ratio']:.3e})."
-                )
-            else:
-                print(
-                    "WARNING: Row reached the maximum of "
-                    f"{convergence['walks_used']} walks without convergence."
-                )
+            for completed, future in enumerate(
+                as_completed(future_to_net), start=1
+            ):
+                master_name = future_to_net[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"FRW row {master_name} failed in a worker process."
+                    ) from exc
+                row_results[result["row_index"]] = result
+                _print_row_progress(completed, row_count, result)
 
-        context = master_vgss.sampling_context
-        h_estimate = sampling_stats.estimate_H(context)
-        capacitance_row = capacitance_accumulator.finalize(h_estimate)
-        capacitance_row["convergence"] = convergence
-        metrics = metrics_accumulator.finalize()
+    ordered_row_results = [
+        row_results[net_indices[master_vgss.net.name]]
+        for master_vgss in nets_to_run
+    ]
+    results = [item["export_data"] for item in ordered_row_results]
+    capacitance_rows = [
+        item["capacitance_row"] for item in ordered_row_results
+    ]
 
-        export_data = {
-            "master_net": master_vgss.net.name,
-            "num_walks": capacitance_accumulator.walk_count,
-            "Sg": sampling_stats.estimate_surface_area(context),
-            "mean_p": sampling_stats.estimate_mean_p(),
-            "H": h_estimate,
-            "sampling_stats": sampling_stats.as_dict(context),
-            "first_transition_mode": first_transition_mode,
-            "convergence": convergence,
-            "metrics": metrics,
-            "capacitance": capacitance_row,
+    if args.visualization:
+        vgss_by_name = {
+            net_vgss.net.name: net_vgss for net_vgss in all_net_vgss
         }
-
-        if visualization_outcome is not None:
-            visualization_walk = visualization_outcome.as_dict()
-            export_data["visualization_walk"] = visualization_walk
+        for result in results:
+            visualization_walk = result.get("visualization_walk")
+            if visualization_walk is None:
+                continue
             path_points, maximal_cubes, terminal = extract_walk_trace(
                 visualization_walk
             )
             visualize_3d_walk(
                 system_conductors,
-                master_vgss,
+                vgss_by_name[result["master_net"]],
                 path_points,
                 maximal_cubes,
                 terminal,
                 all_net_vgss,
             )
-        capacitance_rows.append(capacitance_row)
 
-        results.append(export_data)
-
-    #-----------capacitance----------
+    # Assemble the matrix only when every master-net row was requested.
     matrix_result = None
     if run_all_nets:
-        nets=[net_vgss.net.name for net_vgss in all_net_vgss]
-        matrix_result = assemble_capacitance_matrix( capacitance_rows, nets, )
+        nets = [net_vgss.net.name for net_vgss in all_net_vgss]
+        matrix_result = assemble_capacitance_matrix(capacitance_rows, nets)
         print_capacitance_matrix(matrix_result)
 
     if run_all_nets:
@@ -418,3 +498,7 @@ if __name__ == "__main__":
         )
     else:
         print(f"Success! Saved {results[0]['num_walks']} walks.")
+
+
+if __name__ == "__main__":
+    main()

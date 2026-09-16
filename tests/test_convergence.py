@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from FRW.cli import _build_parser, _execution_settings, _row_rng
+from FRW.cli import _build_parser, _row_rng, _worker_count, main
 from FRW.convergence import check_row_convergence
 
 
@@ -64,31 +64,36 @@ def test_zero_row_does_not_report_false_convergence() -> None:
 
 def test_cli_defaults_to_adaptive_convergence() -> None:
     args = _build_parser().parse_args(["input.m"])
-    settings = _execution_settings(args)
 
-    assert settings == {
-        "adaptive": True,
-        "walk_limit": 100000,
-        "minimum_walks": 2000,
-        "check_every": 200,
-        "relative_tolerance": 0.03,
-        "minimum_target_hits": 10,
-    }
+    assert args.walks is None
+    assert args.max_walks == 100000
+    assert args.min_walks == 2000
+    assert args.check_every == 200
+    assert args.tolerance == 0.03
+    assert args.min_hits == 10
+    assert args.workers == 4
 
 
 def test_explicit_walk_count_selects_fixed_mode() -> None:
     args = _build_parser().parse_args(["input.m", "--walks", "5000"])
-    settings = _execution_settings(args)
 
-    assert settings["adaptive"] is False
-    assert settings["walk_limit"] == 5000
+    assert args.walks == 5000
 
 
 def test_adaptive_counts_must_preserve_complete_pairs() -> None:
-    args = _build_parser().parse_args(["input.m", "--check-every", "101"])
+    with pytest.raises(SystemExit):
+        main(["input.m", "--check-every", "101"])
 
-    with pytest.raises(ValueError, match="positive even"):
-        _execution_settings(args)
+
+def test_workers_are_limited_by_the_number_of_rows() -> None:
+    assert _worker_count(4, 5) == 4
+    assert _worker_count(4, 2) == 2
+    assert _worker_count(4, 1) == 1
+
+
+def test_worker_count_must_be_positive() -> None:
+    with pytest.raises(SystemExit):
+        main(["input.m", "--workers", "0"])
 
 
 def test_each_row_has_an_independent_reproducible_rng_stream() -> None:
