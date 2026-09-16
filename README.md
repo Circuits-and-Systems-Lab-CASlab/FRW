@@ -416,6 +416,11 @@ begins from a fresh point accepted by `SampleOnVGSS`. The first cube supports
 both the original transition and derivative-importance stratification through
 the same `sample_first_transition()` method.
 
+`run_one_walk()` returns a compact `WalkOutcome` containing the terminal net,
+first-hop weight, termination reason, and hop count. Its complete cube trace is
+optional. The command-line runner consumes each outcome immediately, updates
+the capacitance and metric accumulators, and then discards it.
+
 ## Run FRW for one selected net
 
 ```python
@@ -527,7 +532,9 @@ results = {
 }
 ```
 
-The existing `path_data` and `hit_conductor` fields are preserved. `start_point` and the VGSS sampling statistics are added by the integration.
+The compatibility `run_frw_geometry()` batch API still returns the stored
+`walks` list shown above, including `path_data`. The CLI uses the compact online
+path instead and does not export individual walks.
 
 # Command-line usage
 
@@ -629,6 +636,11 @@ positive even number. If `--master` is omitted, it runs every detected net and
 assembles the full capacitance matrix. Use `--master Net1` to run only one row.
 Visualization is disabled by default; add `--visualization` to display one
 saved walk for each master net.
+
+Capacitance and metrics are accumulated as each walk finishes. In stratified
+mode, each inward/outward pair forms one statistical sample. The output reports
+the pair count and the online standard error for each row entry. A full path is
+retained only for the first walk when visualization is requested.
 
 The Python API remains backward compatible and defaults to the standard first
 transition. To revert the CLI itself to standard sampling, change its

@@ -5,91 +5,247 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from bgs.topology import find_touching_nets
+from GGFT.ggft import STANDARD_FIRST_TRANSITION, STRATIFIED_FIRST_TRANSITION
+
 
 E0 = 8.8541878128e-12
 L_UNIT = 1.0e0
-
 INFINITY_LABEL = "Infinity"
 
-def calculate_capacitance_row(walks: Sequence[Mapping], H: float, conductors, master_vgss, ) -> dict:
-    """Convert one batch of raw FRW walks into one capacitance-matrix row.
 
-    Homogeneous estimator:
+def _outcome_value(outcome, name, default=None):
+    if isinstance(outcome, Mapping):
+        return outcome.get(name, default)
+    return getattr(outcome, name, default)
 
-        C_ij = E0 * L_UNIT * H / N * sum(omega_k * I[hit net j])
 
-    """
+class CapacitanceRowAccumulator:
+    """Online row estimator with pair-level statistics for stratification."""
 
-    num_walks = len(walks)
-    if num_walks == 0:
-        raise ValueError("At least one walk is required to estimate capacitance.")
-    if not np.isfinite(H) or H < 0.0:
-        raise ValueError("H must be finite and non-negative.")
+    def __init__(
+        self,
+        conductors,
+        master_vgss,
+        first_transition_mode=STANDARD_FIRST_TRANSITION,
+    ):
+        if first_transition_mode not in {
+            STANDARD_FIRST_TRANSITION,
+            STRATIFIED_FIRST_TRANSITION,
+        }:
+            raise ValueError(f"Unknown first-transition mode: {first_transition_mode}")
 
-    nets = find_touching_nets(conductors)
-    net_order = [net.name for net in nets]
-    conductor_to_net = {
-        conductor.name: net.name
-        for net in nets
-        for conductor in net.conductors
-    }
+        nets = find_touching_nets(conductors)
+        self.net_order = [net.name for net in nets]
+        self.master_net = master_vgss.net.name
+        self.first_transition_mode = first_transition_mode
+        self.conductor_to_net = {
+            conductor.name: net.name
+            for net in nets
+            for conductor in net.conductors
+        }
+        self.net_index = {
+            net_name: index
+            for index, net_name in enumerate(self.net_order)
+        }
 
-    weight_sum = {net_name: 0.0 for net_name in net_order}
-    infinity_weight_sum = 0.0
-    unresolved_walks = 0
+        # The final component represents escape to infinity.
+        size = len(self.net_order) + 1
+        self.walk_count = 0
+        self.sample_count = 0
+        self.mean = np.zeros(size, dtype=float)
+        self.M2 = np.zeros(size, dtype=float)
+        self.pending_inward = None
 
-    for walk in walks:
-        omega = float(walk["omega"])
+        self.raw_weight_sums = np.zeros(len(self.net_order), dtype=float)
+        self.infinity_weight_sum = 0.0
+        self.net_hit_counts = np.zeros(len(self.net_order), dtype=int)
+        self.infinity_hits = 0
+        self.unresolved_walks = 0
 
-        termination = walk.get("termination")
-        hit_conductor = walk.get("hit_conductor")
+    def update(self, outcome) -> bool:
+        """Consume one outcome and report whether one sample was completed."""
 
+        self.walk_count += 1
+        omega = float(_outcome_value(outcome, "omega"))
+        termination = _outcome_value(outcome, "termination")
+        hit_conductor = _outcome_value(outcome, "hit_conductor")
+
+        contribution = np.zeros(len(self.net_order) + 1, dtype=float)
         if termination == "hit_conductor":
-            target_net = conductor_to_net[hit_conductor]
-            weight_sum[target_net] += omega
+            target_net = self.conductor_to_net[hit_conductor]
+            target_index = self.net_index[target_net]
+            contribution[target_index] = omega
+            self.raw_weight_sums[target_index] += omega
+            self.net_hit_counts[target_index] += 1
         elif termination == "escaped":
-            infinity_weight_sum += omega
+            contribution[-1] = omega
+            self.infinity_weight_sum += omega
+            self.infinity_hits += 1
         elif termination == "max_hops":
-            unresolved_walks += 1
+            self.unresolved_walks += 1
+        else:
+            raise ValueError(f"Unknown walk termination: {termination!r}")
 
-    geometric_factor = H / num_walks
-    physical_factor = E0 * L_UNIT * geometric_factor
+        if self.first_transition_mode == STANDARD_FIRST_TRANSITION:
+            self._update_statistics(contribution)
+            return True
 
-    geometric_row = {
-        net_name: geometric_factor * net_weight_sum
-        for net_name, net_weight_sum in weight_sum.items()
-    }
-    capacitance_row = {
-        net_name: E0 * L_UNIT * geometric_value
-        for net_name, geometric_value in geometric_row.items()
-    }
+        stratum = _outcome_value(outcome, "first_transition_stratum")
+        if stratum == "inward":
+            if self.pending_inward is not None:
+                raise ValueError("Received two inward outcomes without an outward pair.")
+            self.pending_inward = contribution
+            return False
+        if stratum != "outward":
+            raise ValueError(
+                "Stratified outcomes must identify the inward or outward stratum."
+            )
+        if self.pending_inward is None:
+            raise ValueError("Received an outward outcome without an inward pair.")
 
-    geometric_infinity = geometric_factor * infinity_weight_sum
-    infinity_capacitance = physical_factor * infinity_weight_sum
+        pair_contribution = (self.pending_inward + contribution) / 2.0
+        self.pending_inward = None
+        self._update_statistics(pair_contribution)
+        return True
 
-    unresolved_rate = unresolved_walks / num_walks
-    row_sum_finite = float(sum(capacitance_row.values()))
-    row_sum_with_infinity = row_sum_finite + infinity_capacitance
+    def _update_statistics(self, observation):
+        """Update the vector mean and M2 using Welford's algorithm."""
 
-    return {
-        "master_net": master_vgss.net.name,
-        "net_order": net_order,
-        "num_walks": num_walks,
-        "H": float(H),
-        "E0": E0,
-        "L_UNIT": L_UNIT,
-        "raw_weight_sums":  weight_sum,
-        "infinity_weight_sum": float(infinity_weight_sum),
-        "geometric_row": geometric_row,
-        "capacitance_row_F": capacitance_row,
-        "geometric_infinity": float(geometric_infinity),
-        "infinity_capacitance_F": float(infinity_capacitance),
-        "unresolved_walks": unresolved_walks,
-        "unresolved_rate": float(unresolved_rate),
-        "is_complete": unresolved_walks == 0,
-        "row_sum_finite_F": row_sum_finite,
-        "row_sum_with_infinity_F": float(row_sum_with_infinity),
-    }
+        self.sample_count += 1
+        delta = observation - self.mean
+        self.mean += delta / self.sample_count
+        self.M2 += delta * (observation - self.mean)
+
+    def finalize(self, H: float) -> dict:
+        """Convert the running estimator into a capacitance-row result."""
+
+        if self.walk_count == 0:
+            raise ValueError("At least one walk is required to estimate capacitance.")
+        if self.pending_inward is not None:
+            raise ValueError("Cannot finalize an incomplete inward/outward pair.")
+        if not np.isfinite(H) or H < 0.0:
+            raise ValueError("H must be finite and non-negative.")
+
+        mean_finite = self.mean[:-1]
+        geometric_values = H * mean_finite
+        physical_values = E0 * L_UNIT * geometric_values
+        geometric_infinity = H * self.mean[-1]
+        infinity_capacitance = E0 * L_UNIT * geometric_infinity
+
+        if self.sample_count >= 2:
+            variance = np.maximum(self.M2 / (self.sample_count - 1), 0.0)
+            weight_standard_error = np.sqrt(variance / self.sample_count)
+            geometric_standard_error = H * weight_standard_error
+            physical_standard_error = E0 * L_UNIT * geometric_standard_error
+        else:
+            weight_standard_error = None
+            geometric_standard_error = None
+            physical_standard_error = None
+
+        geometric_row = {
+            name: float(geometric_values[index])
+            for index, name in enumerate(self.net_order)
+        }
+        capacitance_row = {
+            name: float(physical_values[index])
+            for index, name in enumerate(self.net_order)
+        }
+        raw_weight_sums = {
+            name: float(self.raw_weight_sums[index])
+            for index, name in enumerate(self.net_order)
+        }
+        net_hit_counts = {
+            name: int(self.net_hit_counts[index])
+            for index, name in enumerate(self.net_order)
+        }
+
+        if weight_standard_error is None:
+            weight_se_row = {name: None for name in self.net_order}
+            geometric_se_row = {name: None for name in self.net_order}
+            physical_se_row = {name: None for name in self.net_order}
+            infinity_weight_se = None
+            infinity_geometric_se = None
+            infinity_physical_se = None
+        else:
+            weight_se_row = {
+                name: float(weight_standard_error[index])
+                for index, name in enumerate(self.net_order)
+            }
+            geometric_se_row = {
+                name: float(geometric_standard_error[index])
+                for index, name in enumerate(self.net_order)
+            }
+            physical_se_row = {
+                name: float(physical_standard_error[index])
+                for index, name in enumerate(self.net_order)
+            }
+            infinity_weight_se = float(weight_standard_error[-1])
+            infinity_geometric_se = float(geometric_standard_error[-1])
+            infinity_physical_se = float(physical_standard_error[-1])
+
+        unresolved_rate = self.unresolved_walks / self.walk_count
+        row_sum_finite = float(sum(capacitance_row.values()))
+        row_sum_with_infinity = row_sum_finite + infinity_capacitance
+
+        return {
+            "master_net": self.master_net,
+            "net_order": self.net_order,
+            "num_walks": self.walk_count,
+            "statistical_sample_count": self.sample_count,
+            "first_transition_mode": self.first_transition_mode,
+            "H": float(H),
+            "E0": E0,
+            "L_UNIT": L_UNIT,
+            "raw_weight_sums": raw_weight_sums,
+            "infinity_weight_sum": float(self.infinity_weight_sum),
+            "net_hit_counts": net_hit_counts,
+            "infinity_hits": self.infinity_hits,
+            "mean_weight_contribution": {
+                name: float(mean_finite[index])
+                for index, name in enumerate(self.net_order)
+            },
+            "weight_standard_error": weight_se_row,
+            "geometric_row": geometric_row,
+            "geometric_standard_error": geometric_se_row,
+            "capacitance_row_F": capacitance_row,
+            "standard_error_F": physical_se_row,
+            "geometric_infinity": float(geometric_infinity),
+            "infinity_capacitance_F": float(infinity_capacitance),
+            "infinity_weight_standard_error": infinity_weight_se,
+            "infinity_geometric_standard_error": infinity_geometric_se,
+            "infinity_standard_error_F": infinity_physical_se,
+            "unresolved_walks": self.unresolved_walks,
+            "unresolved_rate": float(unresolved_rate),
+            "is_complete": self.unresolved_walks == 0,
+            "row_sum_finite_F": row_sum_finite,
+            "row_sum_with_infinity_F": float(row_sum_with_infinity),
+        }
+
+
+def calculate_capacitance_row(
+    walks: Sequence[Mapping],
+    H: float,
+    conductors,
+    master_vgss,
+) -> dict:
+    """Convert a stored batch through the same online row accumulator."""
+
+    if not walks:
+        raise ValueError("At least one walk is required to estimate capacitance.")
+
+    first_transition_mode = _outcome_value(
+        walks[0],
+        "first_transition_mode",
+        STANDARD_FIRST_TRANSITION,
+    )
+    accumulator = CapacitanceRowAccumulator(
+        conductors,
+        master_vgss,
+        first_transition_mode=first_transition_mode,
+    )
+    for walk in walks:
+        accumulator.update(walk)
+    return accumulator.finalize(H)
 
 
 def assemble_capacitance_matrix(
@@ -180,7 +336,7 @@ def print_capacitance_matrix(matrix_result: Mapping) -> None:
     print("\nCapacitance matrix (F):")
     print("Net order: " + ", ".join(net_order))
     print(np.array2string(matrix, precision=4, suppress_small=False))
-    
+
     print(
         "Relative symmetry error: "
         f"{matrix_result['relative_asymmetry']:.3e}"

@@ -1,80 +1,88 @@
 from collections import Counter
+from collections.abc import Mapping
 
 import numpy as np
 
 from bgs.topology import find_touching_nets
 
 
-def calculate_frw_metrics( walks, conductors, master_vgss, ):
-    nets = find_touching_nets(conductors)
+def _outcome_value(outcome, name, default=None):
+    if isinstance(outcome, Mapping):
+        return outcome.get(name, default)
+    return getattr(outcome, name, default)
 
-    conductor_to_net = {
-        conductor.name: net.name
-        for net in nets
-        for conductor in net.conductors
-    }
 
-    conductor_hit_counts = Counter()
-    net_hit_counts = Counter()
+class MetricsAccumulator:
+    """Accumulate FRW diagnostic metrics without retaining complete walks."""
 
-    termination_counts = Counter(
-        {
-        "hit_conductor": 0,
-        "escaped": 0,
-        "max_hops": 0, 
+    def __init__(self, conductors, master_vgss):
+        nets = find_touching_nets(conductors)
+        self.conductor_to_net = {
+            conductor.name: net.name
+            for net in nets
+            for conductor in net.conductors
         }
-    )
+        self.master_net_name = master_vgss.net.name
+        self.conductor_hit_counts = Counter()
+        self.net_hit_counts = Counter()
+        self.termination_counts = Counter(
+            {
+                "hit_conductor": 0,
+                "escaped": 0,
+                "max_hops": 0,
+            }
+        )
+        # Exact median and p95 require only one integer per walk.
+        self.hop_counts = []
 
-    hop_counts = []
+    def update(self, outcome) -> None:
+        termination = _outcome_value(outcome, "termination")
+        hit = _outcome_value(outcome, "hit_conductor")
+        hop_count = _outcome_value(outcome, "hop_count")
+        if hop_count is None:
+            hop_count = len(_outcome_value(outcome, "path_data", []))
 
+        if termination not in self.termination_counts:
+            raise ValueError(f"Unknown walk termination: {termination!r}")
+        self.termination_counts[termination] += 1
+        self.hop_counts.append(int(hop_count))
+
+        if termination != "hit_conductor":
+            return
+
+        self.conductor_hit_counts[hit] += 1
+        hit_net = self.conductor_to_net[hit]
+        self.net_hit_counts[hit_net] += 1
+
+    def finalize(self) -> dict:
+        num_walks = len(self.hop_counts)
+        self_net_hits = self.net_hit_counts.get(self.master_net_name, 0)
+        other_net_hits = (
+            self.termination_counts["hit_conductor"] - self_net_hits
+        )
+        termination_rates = {
+            name: count / num_walks if num_walks else 0.0
+            for name, count in self.termination_counts.items()
+        }
+
+        return {
+            "conductor_hit_counts": dict(self.conductor_hit_counts),
+            "net_hit_counts": dict(self.net_hit_counts),
+            "self_net_hits": self_net_hits,
+            "other_net_hits": other_net_hits,
+            "termination_counts": dict(self.termination_counts),
+            "termination_rates": termination_rates,
+            "hop_statistics": _calculate_hop_statistics(self.hop_counts),
+        }
+
+
+def calculate_frw_metrics(walks, conductors, master_vgss):
+    """Compatibility batch API using the online metrics accumulator."""
+
+    accumulator = MetricsAccumulator(conductors, master_vgss)
     for walk in walks:
-        hit = walk.get("hit_conductor")
-        hop_counts.append(len(walk.get("path_data", [])))
-
-        if hit == "Infinity (Ground)":
-            termination_counts["escaped"] += 1
-            continue
-
-        if hit is None:
-            termination_counts["max_hops"] += 1
-            continue
-
-        termination_counts["hit_conductor"] += 1
-        conductor_hit_counts[hit] += 1
-
-        hit_net = conductor_to_net[hit]
-        net_hit_counts[hit_net] += 1
-
-    master_net_name = master_vgss.net.name
-
-    self_net_hits = net_hit_counts.get(
-        master_net_name,
-        0,
-    )
-
-    other_net_hits = (
-        termination_counts["hit_conductor"]
-        - self_net_hits
-    )
-
-    num_walks = len(walks)
-
-    termination_rates = {
-        name: count / num_walks if num_walks else 0.0
-        for name, count in termination_counts.items()
-    }
-
-    hop_statistics = _calculate_hop_statistics( hop_counts )
-
-    return {
-        "conductor_hit_counts": dict( conductor_hit_counts ),
-        "net_hit_counts": dict(net_hit_counts),
-        "self_net_hits": self_net_hits,
-        "other_net_hits": other_net_hits,
-        "termination_counts": dict( termination_counts ),
-        "termination_rates": termination_rates,
-        "hop_statistics": hop_statistics,
-    }
+        accumulator.update(walk)
+    return accumulator.finalize()
 
 
 def _calculate_hop_statistics(hop_counts):
