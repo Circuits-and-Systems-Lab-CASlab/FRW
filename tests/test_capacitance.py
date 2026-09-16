@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from FRW.capacitance import (
+    CapacitanceRowAccumulator,
     E0,
     L_UNIT,
     assemble_capacitance_matrix,
@@ -107,6 +108,83 @@ def test_capacitance_accumulates_touching_blocks_by_net() -> None:
 
     assert result["raw_weight_sums"]["Net1"] == pytest.approx(4.0)
     assert result["raw_weight_sums"]["Net2"] == pytest.approx(0.0)
+
+
+def test_stratified_accumulator_uses_complete_pairs_for_statistics() -> None:
+    conductors = [
+        _conductor("C1", Bounds(0, 1, 0, 1, 0, 1)),
+        _conductor("C2", Bounds(3, 4, 0, 1, 0, 1)),
+    ]
+    nets = find_touching_nets(conductors)
+    master_vgss = _MasterVGSS(nets[0])
+    accumulator = CapacitanceRowAccumulator(
+        conductors,
+        master_vgss,
+        first_transition_mode="stratified",
+    )
+
+    outcomes = [
+        {
+            "omega": 2.0,
+            "termination": "hit_conductor",
+            "hit_conductor": "C1",
+            "first_transition_stratum": "inward",
+        },
+        {
+            "omega": 4.0,
+            "termination": "hit_conductor",
+            "hit_conductor": "C1",
+            "first_transition_stratum": "outward",
+        },
+        {
+            "omega": 6.0,
+            "termination": "hit_conductor",
+            "hit_conductor": "C1",
+            "first_transition_stratum": "inward",
+        },
+        {
+            "omega": 2.0,
+            "termination": "hit_conductor",
+            "hit_conductor": "C1",
+            "first_transition_stratum": "outward",
+        },
+    ]
+
+    completed = [accumulator.update(outcome) for outcome in outcomes]
+    result = accumulator.finalize(H=2.0)
+
+    assert completed == [False, True, False, True]
+    assert result["num_walks"] == 4
+    assert result["statistical_sample_count"] == 2
+    assert result["raw_weight_sums"]["Net1"] == pytest.approx(14.0)
+    assert result["mean_weight_contribution"]["Net1"] == pytest.approx(3.5)
+    assert result["geometric_row"]["Net1"] == pytest.approx(7.0)
+    assert result["weight_standard_error"]["Net1"] == pytest.approx(0.5)
+    assert result["geometric_standard_error"]["Net1"] == pytest.approx(1.0)
+    assert result["standard_error_F"]["Net1"] == pytest.approx(E0 * L_UNIT)
+
+
+def test_stratified_accumulator_rejects_an_incomplete_pair() -> None:
+    conductors = [
+        _conductor("C1", Bounds(0, 1, 0, 1, 0, 1)),
+    ]
+    nets = find_touching_nets(conductors)
+    accumulator = CapacitanceRowAccumulator(
+        conductors,
+        _MasterVGSS(nets[0]),
+        first_transition_mode="stratified",
+    )
+    accumulator.update(
+        {
+            "omega": 1.0,
+            "termination": "hit_conductor",
+            "hit_conductor": "C1",
+            "first_transition_stratum": "inward",
+        }
+    )
+
+    with pytest.raises(ValueError, match="incomplete"):
+        accumulator.finalize(H=1.0)
 
 
 def test_assemble_capacitance_matrix_preserves_independent_rows() -> None:

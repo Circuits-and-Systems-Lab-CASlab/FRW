@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
@@ -7,6 +9,38 @@ from GGFT.ggft import (
     STRATIFIED_FIRST_TRANSITION,
     CubeGFT,
 )
+
+
+@dataclass
+class WalkOutcome:
+    """Compact result of one FRW walk, with an optional visualization trace."""
+
+    start_point: list[float]
+    start_normal: list[float]
+    first_panel_index: int
+    first_transition_mode: str
+    first_transition_stratum: str | None
+    omega: float
+    hit_conductor: str | None
+    termination: str
+    hop_count: int
+    path_data: list[dict] | None = None
+
+    def as_dict(self) -> dict:
+        result = {
+            "start_point": self.start_point,
+            "start_normal": self.start_normal,
+            "first_panel_index": self.first_panel_index,
+            "first_transition_mode": self.first_transition_mode,
+            "first_transition_stratum": self.first_transition_stratum,
+            "omega": self.omega,
+            "hit_conductor": self.hit_conductor,
+            "termination": self.termination,
+            "hop_count": self.hop_count,
+        }
+        if self.path_data is not None:
+            result["path_data"] = self.path_data
+        return result
 
 
 # ==========================================
@@ -59,20 +93,7 @@ def sample_point_on_maximal_cube(p_center, radius, rng):
     return sample_point_on_bgs(cube_min, cube_max, rng)
 
 
-def run_frw_geometry(
-    conductors,
-    master_vgss,
-    rng,
-    num_walks=1000,
-    max_hops=200,
-    first_transition_mode=STANDARD_FIRST_TRANSITION,
-):
-    """Run FRW paths and return raw walk data.
-
-    Capacitance is intentionally not accumulated here.  The first-hop weight
-    ``omega`` and the terminal condition are stored for post-processing by
-    ``FRW.capacitance``.
-    """
+def _validate_run_configuration(num_walks, first_transition_mode):
     if num_walks <= 0:
         raise ValueError("num_walks must be a positive integer.")
     if first_transition_mode not in FIRST_TRANSITION_MODES:
@@ -87,53 +108,60 @@ def run_frw_geometry(
             "of walks for exact inward/outward allocation."
         )
 
-    sys_center, sys_size = get_system_bounds(conductors)
-    math_kill_radius = sys_size * 500_000.0
 
-    all_walk_data = []
-    sampling_stats = VGSSSamplingStats()
+def run_one_walk(
+    conductors,
+    master_vgss,
+    gft,
+    rng,
+    walk_index,
+    sampling_stats,
+    system_center,
+    math_kill_radius,
+    max_hops=200,
+    first_transition_mode=STANDARD_FIRST_TRANSITION,
+    record_path=False,
+) -> WalkOutcome:
+    """Run one physical FRW walk and return its compact terminal outcome."""
 
-    gft = CubeGFT.load_default()
+    start_sample = sample_on_vgss(
+        master_vgss.sampling_context,
+        rng,
+        stats=sampling_stats,
+    )
+    current_p = start_sample.point
+    surface_normal = start_sample.normal
+    start_point = current_p.copy()
+    current_walk_path = [] if record_path else None
 
-    for walk in range(num_walks):
-        percent_done = (walk + 1) / num_walks * 100.0
-        print(f"\rProgress: {percent_done:.1f}% ({walk + 1}/{num_walks})", end="", flush=True,)
+    hit_target = None
+    termination = "max_hops"
 
-        start_sample = sample_on_vgss(
-            master_vgss.sampling_context,
-            rng,
-            stats=sampling_stats,
+    # ---------- first transition ----------
+    distances = [c.distance_to_point(current_p) for c in conductors]
+    min_dist = min(distances)
+    side_a = 2 * min_dist
+
+    first_transition_stratum = None
+    allocation_probability = None
+    if first_transition_mode == STRATIFIED_FIRST_TRANSITION:
+        first_transition_stratum = (
+            "inward" if walk_index % 2 == 0 else "outward"
         )
-        current_p = start_sample.point
-        surface_normal = start_sample.normal
-        start_point = current_p.copy()
-        current_walk_path = []
+        allocation_probability = 0.5
 
-        hit_target = None
-        termination = "max_hops"
+    next_point, panel_index, probability, omega = gft.sample_first_transition(
+        start_point,
+        min_dist,
+        surface_normal,
+        rng,
+        mode=first_transition_mode,
+        stratum=first_transition_stratum,
+        allocation_probability=allocation_probability,
+    )
 
-        # ---------- first transition ----------
-        distances = [c.distance_to_point(current_p) for c in conductors]
-        min_dist = min(distances)
-        side_a = 2 * min_dist
-
-        first_transition_stratum = None
-        allocation_probability = None
-        if first_transition_mode == STRATIFIED_FIRST_TRANSITION:
-            first_transition_stratum = ("inward" if walk % 2 == 0 else "outward")
-            allocation_probability = 0.5
-
-        next_point, panel_index, probability, omega = gft.sample_first_transition(
-            start_point,
-            min_dist,
-            surface_normal,
-            rng,
-            mode=first_transition_mode,
-            stratum=first_transition_stratum,
-            allocation_probability=allocation_probability,
-        )
-
-        table_probability = float(gft.probabilities[panel_index])
+    table_probability = float(gft.probabilities[panel_index])
+    if current_walk_path is not None:
         first_path_record = {
             "center": current_p.tolist(),
             "a": float(side_a),
@@ -148,25 +176,26 @@ def run_frw_geometry(
             )
         current_walk_path.append(first_path_record)
 
-        # Later diagnostic records retain the physical GGFT probability of
-        # the transition that selected their centre.  In stratified mode the
-        # first proposal probability is stored separately above.
-        probability = table_probability
-        current_p = next_point
+    # The old path metric counted the first transition cube as one hop.
+    hop_count = 1
+    probability = table_probability
+    current_p = next_point
 
-        # ---------- remaining transitions ----------
-        for _hop in range(max_hops):
-            dist_to_center = np.max(np.abs(current_p - sys_center))
-            if dist_to_center > math_kill_radius:
-                hit_target = "Infinity (Ground)"
-                termination = "escaped"
-                break
+    # ---------- remaining transitions ----------
+    for _hop in range(max_hops):
+        dist_to_center = np.max(np.abs(current_p - system_center))
+        if dist_to_center > math_kill_radius:
+            hit_target = "Infinity (Ground)"
+            termination = "escaped"
+            break
 
-            distances = [c.distance_to_point(current_p) for c in conductors]
-            min_dist = min(distances)
-            nearest_idx = int(np.argmin(distances))
-            side_a = 2 * min_dist
+        distances = [c.distance_to_point(current_p) for c in conductors]
+        min_dist = min(distances)
+        nearest_idx = int(np.argmin(distances))
+        side_a = 2 * min_dist
+        hop_count += 1
 
+        if current_walk_path is not None:
             current_walk_path.append(
                 {
                     "center": current_p.tolist(),
@@ -175,26 +204,73 @@ def run_frw_geometry(
                 }
             )
 
-            if min_dist < 1e-4:
-                hit_target = conductors[nearest_idx].name
-                termination = "hit_conductor"
-                break
+        if min_dist < 1e-4:
+            hit_target = conductors[nearest_idx].name
+            termination = "hit_conductor"
+            break
 
-            current_p, _index, probability = gft.sample_next_point(current_point=current_p, cube_half_size=min_dist, rng=rng, )
-
-        all_walk_data.append(
-            {
-                "start_point": start_point.tolist(),
-                "start_normal": surface_normal.tolist(),
-                "first_panel_index": int(panel_index),
-                "first_transition_mode": first_transition_mode,
-                "first_transition_stratum": first_transition_stratum,
-                "omega": float(omega),
-                "path_data": current_walk_path,
-                "hit_conductor": hit_target,
-                "termination": termination,
-            }
+        current_p, _index, probability = gft.sample_next_point(
+            current_point=current_p,
+            cube_half_size=min_dist,
+            rng=rng,
         )
+
+    return WalkOutcome(
+        start_point=start_point.tolist(),
+        start_normal=surface_normal.tolist(),
+        first_panel_index=int(panel_index),
+        first_transition_mode=first_transition_mode,
+        first_transition_stratum=first_transition_stratum,
+        omega=float(omega),
+        hit_conductor=hit_target,
+        termination=termination,
+        hop_count=hop_count,
+        path_data=current_walk_path,
+    )
+
+
+def run_frw_geometry(
+    conductors,
+    master_vgss,
+    rng,
+    num_walks=1000,
+    max_hops=200,
+    first_transition_mode=STANDARD_FIRST_TRANSITION,
+):
+    """Compatibility batch API that stores every walk and its full path.
+
+    Capacitance is intentionally not accumulated here.  The first-hop weight
+    ``omega`` and the terminal condition are stored for post-processing by
+    ``FRW.capacitance``.
+    """
+    _validate_run_configuration(num_walks, first_transition_mode)
+
+    sys_center, sys_size = get_system_bounds(conductors)
+    math_kill_radius = sys_size * 500_000.0
+
+    all_walk_data = []
+    sampling_stats = VGSSSamplingStats()
+
+    gft = CubeGFT.load_default()
+
+    for walk in range(num_walks):
+        percent_done = (walk + 1) / num_walks * 100.0
+        print(f"\rProgress: {percent_done:.1f}% ({walk + 1}/{num_walks})", end="", flush=True,)
+
+        outcome = run_one_walk(
+            conductors=conductors,
+            master_vgss=master_vgss,
+            gft=gft,
+            rng=rng,
+            walk_index=walk,
+            sampling_stats=sampling_stats,
+            system_center=sys_center,
+            math_kill_radius=math_kill_radius,
+            max_hops=max_hops,
+            first_transition_mode=first_transition_mode,
+            record_path=True,
+        )
+        all_walk_data.append(outcome.as_dict())
 
     print()
 

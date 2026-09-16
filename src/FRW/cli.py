@@ -5,15 +5,16 @@ from pathlib import Path
 import numpy as np
 
 from bgs.matlab_parser import parse_matlab_geometry
+from bgs.sampling import VGSSSamplingStats
 from bgs.vgss import build_all_net_vgss
+from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
 from .capacitance import (
+    CapacitanceRowAccumulator,
     assemble_capacitance_matrix,
-    calculate_capacitance_row,
     print_capacitance_matrix,
-    print_capacitance_row,
 )
-from .metrics import calculate_frw_metrics, print_metrics
-from .random_walk import run_frw_geometry
+from .metrics import MetricsAccumulator
+from .random_walk import get_system_bounds, run_one_walk
 from .visualization import extract_walk_trace, visualize_3d_walk
 
 
@@ -135,6 +136,10 @@ if __name__ == "__main__":
     )
 
     rng = np.random.default_rng(args.seed)
+    gft = CubeGFT.load_default()
+    system_center, system_size = get_system_bounds(system_conductors)
+    math_kill_radius = system_size * 500_000.0
+    first_transition_mode = STRATIFIED_FIRST_TRANSITION
 
     run_all_nets = args.master is None
     nets_to_run = (
@@ -148,22 +153,75 @@ if __name__ == "__main__":
 
     for master_vgss in nets_to_run:
         print("-" * 60)
-        print("\nExecuting Batch Geometric Walk Engine...")
+        print("\nExecuting Online Geometric Walk Engine...")
         print(f"Master Net: {master_vgss.net.name}")
         print("Conductors: " + ", ".join(master_vgss.net.conductor_names))
         print("-" * 30)
 
-        export_data = run_frw_geometry(
+        sampling_stats = VGSSSamplingStats()
+        capacitance_accumulator = CapacitanceRowAccumulator(
             system_conductors,
             master_vgss,
-            rng,
-            num_walks=args.walks,
-            first_transition_mode="stratified",
+            first_transition_mode=first_transition_mode,
         )
+        metrics_accumulator = MetricsAccumulator(
+            system_conductors,
+            master_vgss,
+        )
+        visualization_outcome = None
 
-        if args.visualization:
+        for walk_index in range(args.walks):
+            percent_done = (walk_index + 1) / args.walks * 100.0
+            print(
+                f"\rProgress: {percent_done:.1f}% "
+                f"({walk_index + 1}/{args.walks})",
+                end="",
+                flush=True,
+            )
+
+            record_path = args.visualization and walk_index == 0 #record only the first walk for visualization
+            outcome = run_one_walk(
+                conductors=system_conductors,
+                master_vgss=master_vgss,
+                gft=gft,
+                rng=rng,
+                walk_index=walk_index,
+                sampling_stats=sampling_stats,
+                system_center=system_center,
+                math_kill_radius=math_kill_radius,
+                first_transition_mode=first_transition_mode,
+                record_path=record_path,
+            )
+            capacitance_accumulator.update(outcome)
+            metrics_accumulator.update(outcome)
+
+            if record_path:
+                visualization_outcome = outcome
+
+        print()
+
+        context = master_vgss.sampling_context
+        h_estimate = sampling_stats.estimate_H(context)
+        capacitance_row = capacitance_accumulator.finalize(h_estimate)
+        metrics = metrics_accumulator.finalize()
+
+        export_data = {
+            "master_net": master_vgss.net.name,
+            "num_walks": args.walks,
+            "Sg": sampling_stats.estimate_surface_area(context),
+            "mean_p": sampling_stats.estimate_mean_p(),
+            "H": h_estimate,
+            "sampling_stats": sampling_stats.as_dict(context),
+            "first_transition_mode": first_transition_mode,
+            "metrics": metrics,
+            "capacitance": capacitance_row,
+        }
+
+        if visualization_outcome is not None:
+            visualization_walk = visualization_outcome.as_dict()
+            export_data["visualization_walk"] = visualization_walk
             path_points, maximal_cubes, terminal = extract_walk_trace(
-                export_data["walks"][0]
+                visualization_walk
             )
             visualize_3d_walk(
                 system_conductors,
@@ -173,24 +231,7 @@ if __name__ == "__main__":
                 terminal,
                 all_net_vgss,
             )
-
-        metrics = calculate_frw_metrics(
-            export_data["walks"],
-            system_conductors,
-            master_vgss,
-        )
-        export_data["metrics"] = metrics
-        # print_metrics(metrics)
-
-        capacitance_row = calculate_capacitance_row(
-            export_data["walks"],
-            export_data["H"],
-            system_conductors,
-            master_vgss,
-        )
-        export_data["capacitance"] = capacitance_row
         capacitance_rows.append(capacitance_row)
-        # print_capacitance_row(capacitance_row)
 
         results.append(export_data)
 
