@@ -209,3 +209,9 @@ def test_assemble_capacitance_matrix_preserves_independent_rows() -> None:
     assert result["diagonal_F"] == [4.0, 3.0]
     assert result["relative_asymmetry"] == pytest.approx(0.05)
     assert result["all_rows_complete"] is True
+    assert result["all_rows_converged"] is None
+
+    row_1["convergence"] = {"enabled": True, "converged": True}
+    row_2["convergence"] = {"enabled": True, "converged": False}
+    adaptive_result = assemble_capacitance_matrix([row_1, row_2])
+    assert adaptive_result["all_rows_converged"] is False

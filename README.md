@@ -626,21 +626,46 @@ The installed `vgss-sample` console command is equivalent to `python -m bgs.vgss
 python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
     --scale-factor 1.25 \
     --max-distance 10 \
-    --walks 5000 \
     --seed 1234 \
     --output output/frw_exported_data.json
 ```
 
-The CLI uses balanced stratified first transitions, so `--walks` must be a
-positive even number. If `--master` is omitted, it runs every detected net and
-assembles the full capacitance matrix. Use `--master Net1` to run only one row.
-Visualization is disabled by default; add `--visualization` to display one
-saved walk for each master net.
+Adaptive convergence is the CLI default. Each master row stops independently
+when its row-max three-standard-error ratio is at most `0.03`, after at least
+2,000 walks and 10 hits per target entry. The default hard limit is 100,000
+walks, with checks every 200 walks. All counts are even so checks occur only
+after complete inward/outward pairs.
+
+Use the adaptive options to change those limits:
+
+```bash
+python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
+    --tolerance 0.02 \
+    --min-walks 4000 \
+    --max-walks 200000 \
+    --check-every 400 \
+    --min-hits 20
+```
+
+Supplying `--walks` selects fixed mode and disables convergence:
+
+```bash
+python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m --walks 5000
+```
+
+If `--master` is omitted, the CLI runs every detected net and assembles the
+full capacitance matrix. A converged row stops and execution continues with the
+next row. Each row has an independent deterministic RNG stream derived from
+`--seed`, so stopping one row earlier does not change later rows. Use
+`--master Net1` to run only one row. Visualization is disabled by default; add
+`--visualization` to display one saved walk for each master net.
 
 Capacitance and metrics are accumulated as each walk finishes. In stratified
 mode, each inward/outward pair forms one statistical sample. The output reports
-the pair count and the online standard error for each row entry. A full path is
-retained only for the first walk when visualization is requested.
+the pair count, online standard error, convergence ratio, stopping reason, and
+actual walks used for each row. Matrix symmetry remains a diagnostic and is not
+used as a stopping condition. A full path is retained only for the first walk
+when visualization is requested.
 
 The Python API remains backward compatible and defaults to the standard first
 transition. To revert the CLI itself to standard sampling, change its
