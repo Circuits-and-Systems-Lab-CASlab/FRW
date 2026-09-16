@@ -627,6 +627,7 @@ python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
     --scale-factor 1.25 \
     --max-distance 10 \
     --seed 1234 \
+    --workers 4 \
     --output output/frw_exported_data.json
 ```
 
@@ -654,11 +655,16 @@ python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m --walks 5000
 ```
 
 If `--master` is omitted, the CLI runs every detected net and assembles the
-full capacitance matrix. A converged row stops and execution continues with the
-next row. Each row has an independent deterministic RNG stream derived from
-`--seed`, so stopping one row earlier does not change later rows. Use
-`--master Net1` to run only one row. Visualization is disabled by default; add
-`--visualization` to display one saved walk for each master net.
+full capacitance matrix. Rows are independent and run in separate worker
+processes. The default is at most four workers; the actual number is limited to
+the number of selected rows. For example, two rows use two workers, while
+`--master Net1` runs sequentially without creating a process pool. Use
+`--workers 1` to force sequential execution.
+
+Each row has an independent deterministic RNG stream derived from `--seed`, so
+parallel scheduling and one row stopping earlier do not change another row's
+random sequence. Visualization is disabled by default; add `--visualization`
+to display one saved walk for each master net after all calculations finish.
 
 Capacitance and metrics are accumulated as each walk finishes. In stratified
 mode, each inward/outward pair forms one statistical sample. The output reports
