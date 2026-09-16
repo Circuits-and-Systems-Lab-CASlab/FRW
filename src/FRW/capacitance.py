@@ -116,6 +116,39 @@ class CapacitanceRowAccumulator:
         self.mean += delta / self.sample_count
         self.M2 += delta * (observation - self.mean)
 
+    def _weight_standard_error(self):
+        if self.sample_count < 2:
+            return None
+        variance = np.maximum(self.M2 / (self.sample_count - 1), 0.0)
+        return np.sqrt(variance / self.sample_count)
+
+    def statistics(self) -> dict:
+        """Return the current H-independent statistics for convergence checks."""
+
+        standard_error = self._weight_standard_error()
+        return {
+            "walk_count": self.walk_count,
+            "statistical_sample_count": self.sample_count,
+            "net_order": list(self.net_order),
+            "mean_weight_contribution": {
+                name: float(self.mean[index])
+                for index, name in enumerate(self.net_order)
+            },
+            "weight_standard_error": {
+                name: (
+                    None
+                    if standard_error is None
+                    else float(standard_error[index])
+                )
+                for index, name in enumerate(self.net_order)
+            },
+            "net_hit_counts": {
+                name: int(self.net_hit_counts[index])
+                for index, name in enumerate(self.net_order)
+            },
+            "pair_complete": self.pending_inward is None,
+        }
+
     def finalize(self, H: float) -> dict:
         """Convert the running estimator into a capacitance-row result."""
 
@@ -132,13 +165,11 @@ class CapacitanceRowAccumulator:
         geometric_infinity = H * self.mean[-1]
         infinity_capacitance = E0 * L_UNIT * geometric_infinity
 
-        if self.sample_count >= 2:
-            variance = np.maximum(self.M2 / (self.sample_count - 1), 0.0)
-            weight_standard_error = np.sqrt(variance / self.sample_count)
+        weight_standard_error = self._weight_standard_error()
+        if weight_standard_error is not None:
             geometric_standard_error = H * weight_standard_error
             physical_standard_error = E0 * L_UNIT * geometric_standard_error
         else:
-            weight_standard_error = None
             geometric_standard_error = None
             physical_standard_error = None
 
@@ -286,6 +317,15 @@ def assemble_capacitance_matrix(
         if max_abs_entry > 0.0
         else 0.0
     )
+    convergence_records = [row.get("convergence") for row in row_results]
+    all_rows_converged = (
+        all(bool(record["converged"]) for record in convergence_records)
+        if all(
+            record is not None and bool(record.get("enabled"))
+            for record in convergence_records
+        )
+        else None
+    )
 
     return {
         "net_order": net_order,
@@ -295,6 +335,7 @@ def assemble_capacitance_matrix(
         "max_abs_asymmetry_F": max_abs_asymmetry,
         "relative_asymmetry": float(relative_asymmetry),
         "all_rows_complete": all(bool(row["is_complete"]) for row in row_results),
+        "all_rows_converged": all_rows_converged,
     }
 
 
