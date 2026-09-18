@@ -6,16 +6,31 @@ import numpy as np
 import pytest
 
 from FRW.capacitance import CapacitanceRowAccumulator, calculate_capacitance_row
-from FRW.random_walk import get_system_bounds, run_frw_geometry, run_one_walk
+from FRW.random_walk import (
+    get_system_bounds,
+    nearest_conductor,
+    run_frw_geometry,
+    run_one_walk,
+)
 from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
 from bgs.matlab_parser import parse_matlab_geometry
-from bgs.models import Bounds, GaussianSurface, make_surface_faces
+from bgs.models import Bounds, Conductor, GaussianSurface, make_surface_faces
 from bgs.sampling import VGSSSamplingStats, prepare_vgss_sampling, sample_on_vgss
 from bgs.vgss import build_vgss_for_conductor
 
 
 def _surface(name: str, bounds: Bounds) -> GaussianSurface:
     return GaussianSurface(name, bounds, make_surface_faces(bounds))
+
+
+def test_nearest_conductor_returns_index_and_distance() -> None:
+    conductors = [
+        Conductor("left", Bounds(0, 1, 0, 1, 0, 1), np.empty((0, 3))),
+        Conductor("right", Bounds(5, 6, 0, 1, 0, 1), np.empty((0, 3))),
+    ]
+
+    assert nearest_conductor([4.0, 0.5, 0.5], conductors) == (1, 1.0)
+    assert nearest_conductor([3.0, 0.5, 0.5], conductors) == (0, 2.0)
 
 
 def test_sampling_stats_return_area_when_p_is_one() -> None:

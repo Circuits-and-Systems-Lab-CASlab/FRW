@@ -57,6 +57,24 @@ def get_system_bounds(conductors):
     return system_center, system_size
 
 
+def nearest_conductor(point, conductors):
+    """Return the index and distance of the conductor nearest to a point."""
+
+    if not conductors:
+        raise ValueError("At least one conductor is required.")
+
+    nearest_idx = 0
+    min_dist = conductors[0].distance_to_point(point)
+
+    for index in range(1, len(conductors)):
+        distance = conductors[index].distance_to_point(point)
+        if distance < min_dist:
+            nearest_idx = index
+            min_dist = distance
+
+    return nearest_idx, min_dist
+
+
 # ==========================================
 # 2. PURE RANDOM WALK LOGIC
 # ==========================================
@@ -138,8 +156,7 @@ def run_one_walk(
     termination = "max_hops"
 
     # ---------- first transition ----------
-    distances = [c.distance_to_point(current_p) for c in conductors]
-    min_dist = min(distances)
+    _nearest_idx, min_dist = nearest_conductor(current_p, conductors)
     side_a = 2 * min_dist
 
     first_transition_stratum = None
@@ -189,9 +206,7 @@ def run_one_walk(
             termination = "escaped"
             break
 
-        distances = [c.distance_to_point(current_p) for c in conductors]
-        min_dist = min(distances)
-        nearest_idx = int(np.argmin(distances))
+        nearest_idx, min_dist = nearest_conductor(current_p, conductors)
         side_a = 2 * min_dist
         hop_count += 1
 
