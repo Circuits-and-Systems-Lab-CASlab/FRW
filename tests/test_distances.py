@@ -1,5 +1,7 @@
+import numpy as np
+
 from bgs.distances import block_distance, directional_distances, limiting_directions
-from bgs.models import Bounds
+from bgs.models import Bounds, Conductor
 
 
 def test_c1_to_c2_positive_x_gap() -> None:
@@ -18,3 +20,14 @@ def test_c1_to_c2_positive_x_gap() -> None:
     }
     assert block_distance(c1, c2) == 2
     assert limiting_directions(c1, c2) == ("PX",)
+
+
+def test_conductor_chebyshev_distance() -> None:
+    conductor = Conductor(
+        "C1",
+        Bounds(0, 1, 0, 1, 0, 1),
+        face_vertices=np.empty((0, 3)),
+    )
+
+    assert conductor.distance_to_point([0.5, 0.5, 0.5]) == 0.0
+    assert conductor.distance_to_point([3.0, -2.0, 0.5]) == 2.0

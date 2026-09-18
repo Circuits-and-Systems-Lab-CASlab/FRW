@@ -183,6 +183,7 @@ def _run_master_row(
     math_kill_radius = system_size * 500_000.0
     first_transition_mode = STRATIFIED_FIRST_TRANSITION
 
+    print(f"starting master-net ({master_vgss.net.name})")
     sampling_stats = VGSSSamplingStats()
     capacitance_accumulator = CapacitanceRowAccumulator(
         conductors,
@@ -219,7 +220,7 @@ def _run_master_row(
             continue
 
         completed_walks = capacitance_accumulator.walk_count
-        
+
         # Determine whether to check convergence at this point.
         should_check = (completed_walks >= minimum_walks and ( completed_walks % check_every == 0 or completed_walks == walk_limit ) )
         if not should_check:
@@ -348,6 +349,7 @@ def main(argv=None) -> None:
         relative_tolerance = args.tolerance
         minimum_target_hits = args.min_hits
 
+#----------reading input geometry----------
     filename = args.input_file
     print(f"Reading geometry from {filename}...\n")
 
@@ -382,8 +384,10 @@ def main(argv=None) -> None:
     active_workers = _worker_count(args.workers, row_count)
     row_results = {}
 
+#-----------start the FRW engine-----------
     print("\nExecuting Online Geometric Walk Engine...")
     if active_workers == 1:
+        #single proccess
         print(f"Running {row_count} row(s) sequentially.\n")
         for completed, master_vgss in enumerate(nets_to_run, start=1):
             row_index = net_indices[master_vgss.net.name]
@@ -410,6 +414,7 @@ def main(argv=None) -> None:
         with ProcessPoolExecutor(max_workers=active_workers) as executor:
             future_to_net = {}
             for master_vgss in nets_to_run:
+                
                 row_index = net_indices[master_vgss.net.name]
                 future = executor.submit(
                     _run_master_row,
@@ -427,27 +432,22 @@ def main(argv=None) -> None:
                 )
                 future_to_net[future] = master_vgss.net.name
 
-            for completed, future in enumerate(
-                as_completed(future_to_net), start=1
-            ):
+            for completed, future in enumerate( as_completed(future_to_net), start=1 ):
                 master_name = future_to_net[future]
                 try:
                     result = future.result()
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"FRW row {master_name} failed in a worker process."
-                    ) from exc
+                    raise RuntimeError( f"FRW row {master_name} failed in a worker process." ) from exc
                 row_results[result["row_index"]] = result
                 _print_row_progress(completed, row_count, result)
 
+    #order the results according to their names as original
     ordered_row_results = [
         row_results[net_indices[master_vgss.net.name]]
         for master_vgss in nets_to_run
     ]
-    results = [item["export_data"] for item in ordered_row_results]
-    capacitance_rows = [
-        item["capacitance_row"] for item in ordered_row_results
-    ]
+    results = [ item["export_data"] for item in ordered_row_results ]
+    capacitance_rows = [ item["capacitance_row"] for item in ordered_row_results ]
 
     if args.visualization:
         vgss_by_name = {

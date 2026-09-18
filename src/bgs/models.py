@@ -90,14 +90,16 @@ class Conductor:
         )
 
     def distance_to_point(self, point: np.ndarray) -> float:
-        """Chebyshev distance used by the original maximal-cube FRW."""
+        """Return the Chebyshev distance from a point to this conductor."""
 
-        point = np.asarray(point, dtype=float)
-        clamped = np.maximum(
-            self.min_bounds,
-            np.minimum(point, self.max_bounds),
-        )
-        return float(np.max(np.abs(point - clamped)))
+        x, y, z = point
+        bounds = self.bounds
+
+        dx = max(bounds.xmin - x, 0.0, x - bounds.xmax)
+        dy = max(bounds.ymin - y, 0.0, y - bounds.ymax)
+        dz = max(bounds.zmin - z, 0.0, z - bounds.zmax)
+
+        return float(max(dx, dy, dz))
 
     def get_surface_normal(self, point: np.ndarray) -> np.ndarray:
         """Return the outward-facing normal of the nearest face to a point."""
