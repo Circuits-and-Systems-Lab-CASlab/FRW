@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -655,3 +656,217 @@ def visualize_3d_walk(
 
     _save_or_show(figure, save_path=save_path, show=show)
     return figure
+
+
+def _cuboid_wireframe_coords(min_b, max_b):
+    x0, y0, z0 = min_b
+    x1, y1, z1 = max_b
+    xs = [x0, x1, x1, x0, x0, None, x0, x1, x1, x0, x0, None, x0, x0, None, x1, x1, None, x1, x1, None, x0, x0]
+    ys = [y0, y0, y1, y1, y0, None, y0, y0, y1, y1, y0, None, y0, y0, None, y0, y0, None, y1, y1, None, y1, y1]
+    zs = [z0, z0, z0, z0, z0, None, z1, z1, z1, z1, z1, None, z0, z1, None, z0, z1, None, z0, z1, None, z0, z1]
+    return xs, ys, zs
+
+
+def _cuboid_mesh_coords(min_b, max_b):
+    x0, y0, z0 = min_b
+    x1, y1, z1 = max_b
+    x = [x0, x1, x1, x0, x0, x1, x1, x0]
+    y = [y0, y0, y1, y1, y0, y0, y1, y1]
+    z = [z0, z0, z0, z0, z1, z1, z1, z1]
+    i = [7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2]
+    j = [3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3]
+    k = [0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6]
+    return x, y, z, i, j, k
+
+
+def visualize_3d_walk_html(
+    system_conductors: Sequence,
+    master_vgss,
+    path_points: np.ndarray,
+    maximal_cubes: list[tuple[Sequence[float], float]],
+    terminal: str,
+    all_net_vgss: Sequence | None = None,
+    save_path: Path | str = "walk_3d.html",
+    title: str | None = None,
+) -> Path:
+    """Generate a self-contained, interactive 3D WebGL HTML visualization using Plotly.js."""
+    traces = []
+    colors = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+    ]
+
+    collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
+    net_color_map = {
+        net_vgss.net.name: colors[idx % len(colors)]
+        for idx, net_vgss in enumerate(collection)
+    }
+
+    # 1. Conductors (Mesh + Wireframes)
+    for c in system_conductors:
+        net_name = next(
+            (net_vgss.net.name for net_vgss in collection if any(nc.name == c.name for nc in net_vgss.net.conductors)),
+            "Unknown"
+        )
+        c_color = net_color_map.get(net_name, "#4682b4")
+        x, y, z, i, j, k = _cuboid_mesh_coords(c.min_bounds, c.max_bounds)
+        traces.append({
+            "type": "mesh3d",
+            "name": f"Conductor: {c.name} ({net_name})",
+            "x": x, "y": y, "z": z, "i": i, "j": j, "k": k,
+            "color": c_color,
+            "opacity": 0.55,
+            "flatshading": True,
+            "legendgroup": "Conductors",
+            "showlegend": True,
+        })
+        wx, wy, wz = _cuboid_wireframe_coords(c.min_bounds, c.max_bounds)
+        traces.append({
+            "type": "scatter3d",
+            "name": f"{c.name} edges",
+            "mode": "lines",
+            "x": wx, "y": wy, "z": wz,
+            "line": {"color": "#111111", "width": 2},
+            "legendgroup": "Conductors",
+            "showlegend": False,
+            "hoverinfo": "none",
+        })
+
+    # 2. Master VGSS
+    for s_idx, surface in enumerate(master_vgss.surfaces):
+        wx, wy, wz = _cuboid_wireframe_coords(surface.min_bounds, surface.max_bounds)
+        traces.append({
+            "type": "scatter3d",
+            "name": f"Master VGSS ({master_vgss.net.name})",
+            "mode": "lines",
+            "x": wx, "y": wy, "z": wz,
+            "line": {"color": "#ffaa00", "width": 3, "dash": "dash"},
+            "legendgroup": "Master VGSS",
+            "showlegend": s_idx == 0,
+        })
+
+    # 3. Maximal Cubes (hidden by default in legend)
+    cube_xs, cube_ys, cube_zs = [], [], []
+    for center, radius in maximal_cubes:
+        c_min = [center[d] - radius for d in range(3)]
+        c_max = [center[d] + radius for d in range(3)]
+        c_wx, c_wy, c_wz = _cuboid_wireframe_coords(c_min, c_max)
+        cube_xs.extend(c_wx + [None])
+        cube_ys.extend(c_wy + [None])
+        cube_zs.extend(c_wz + [None])
+
+    if cube_xs:
+        traces.append({
+            "type": "scatter3d",
+            "name": f"Maximal Cubes ({len(maximal_cubes)})",
+            "mode": "lines",
+            "x": cube_xs, "y": cube_ys, "z": cube_zs,
+            "line": {"color": "rgba(100, 149, 237, 0.45)", "width": 1.5},
+            "visible": "legendonly",
+            "showlegend": True,
+        })
+
+    # 4. Walk Path
+    if len(path_points) > 0:
+        traces.append({
+            "type": "scatter3d",
+            "name": f"Walk Path ({len(path_points) - 1} hops)",
+            "mode": "lines+markers",
+            "x": [float(pt[0]) for pt in path_points],
+            "y": [float(pt[1]) for pt in path_points],
+            "z": [float(pt[2]) for pt in path_points],
+            "line": {"color": "#111111", "width": 4},
+            "marker": {"size": 3.5, "color": "#111111"},
+            "text": [f"Hop {idx}" for idx in range(len(path_points))],
+            "hoverinfo": "text+x+y+z",
+            "showlegend": True,
+        })
+        traces.append({
+            "type": "scatter3d",
+            "name": "VGSS Start Point",
+            "mode": "markers",
+            "x": [float(path_points[0, 0])],
+            "y": [float(path_points[0, 1])],
+            "z": [float(path_points[0, 2])],
+            "marker": {"size": 8, "color": "#2ca02c", "symbol": "diamond"},
+            "text": ["VGSS Start"],
+            "hoverinfo": "text+x+y+z",
+            "showlegend": True,
+        })
+        traces.append({
+            "type": "scatter3d",
+            "name": f"Terminal: {terminal}",
+            "mode": "markers",
+            "x": [float(path_points[-1, 0])],
+            "y": [float(path_points[-1, 1])],
+            "z": [float(path_points[-1, 2])],
+            "marker": {"size": 8, "color": "#d62728", "symbol": "x"},
+            "text": [f"Terminal: {terminal}"],
+            "hoverinfo": "text+x+y+z",
+            "showlegend": True,
+        })
+
+    plot_title = title or f"3D Floating Random Walk — Master: {master_vgss.net.name} (Terminal: {terminal})"
+    layout = {
+        "title": {
+            "text": f"<b>{plot_title}</b>",
+            "font": {"size": 17, "family": "Arial, sans-serif"},
+            "x": 0.05,
+        },
+        "scene": {
+            "xaxis": {"title": "X", "gridcolor": "#e0e0e0"},
+            "yaxis": {"title": "Y", "gridcolor": "#e0e0e0"},
+            "zaxis": {"title": "Z", "gridcolor": "#e0e0e0"},
+            "aspectmode": "data",
+            "camera": {
+                "eye": {"x": 1.6, "y": 1.6, "z": 1.2}
+            }
+        },
+        "margin": {"l": 10, "r": 10, "b": 10, "t": 50},
+        "legend": {
+            "x": 0.82, "y": 0.95,
+            "bgcolor": "rgba(255, 255, 255, 0.85)",
+            "bordercolor": "#cccccc",
+            "borderwidth": 1
+        },
+    }
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{plot_title}</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
+        #plot {{ width: 100%; height: 100%; }}
+        .info-card {{
+            position: absolute; bottom: 15px; left: 15px; background: rgba(255, 255, 255, 0.92);
+            border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 14px; font-size: 13px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12); pointer-events: none; z-index: 10;
+        }}
+    </style>
+</head>
+<body>
+    <div id="plot"></div>
+    <div class="info-card">
+        <div><b>Master Net:</b> {master_vgss.net.name}</div>
+        <div><b>Hops:</b> {len(maximal_cubes)}</div>
+        <div><b>Terminal:</b> {terminal}</div>
+        <div style="margin-top: 4px; color: #57606a; font-size: 11px;">Rotate: Left-drag | Pan: Right-drag | Zoom: Scroll</div>
+    </div>
+    <script>
+        var traces = {json.dumps(traces)};
+        var layout = {json.dumps(layout)};
+        Plotly.newPlot('plot', traces, layout, {{responsive: true}});
+    </script>
+</body>
+</html>
+"""
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    return out_path
