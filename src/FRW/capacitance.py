@@ -27,6 +27,7 @@ class CapacitanceRowAccumulator:
         conductors,
         master_vgss,
         first_transition_mode=STANDARD_FIRST_TRANSITION,
+        finite_window=False,
     ):
         if first_transition_mode not in {
             STANDARD_FIRST_TRANSITION,
@@ -38,6 +39,7 @@ class CapacitanceRowAccumulator:
         self.net_order = [net.name for net in nets]
         self.master_net = master_vgss.net.name
         self.first_transition_mode = first_transition_mode
+        self.finite_window = finite_window
         self.conductor_to_net = {
             conductor.name: net.name
             for net in nets
@@ -48,8 +50,10 @@ class CapacitanceRowAccumulator:
             for index, net_name in enumerate(self.net_order)
         }
 
-        # The final component represents escape to infinity.
-        size = len(self.net_order) + 1
+        # The final two components represent infinity and a Dirichlet window.
+        size = len(self.net_order) + 2
+        self.infinity_index = len(self.net_order)
+        self.window_index = len(self.net_order) + 1
         self.walk_count = 0
         self.sample_count = 0
         self.mean = np.zeros(size, dtype=float)
@@ -58,8 +62,11 @@ class CapacitanceRowAccumulator:
 
         self.raw_weight_sums = np.zeros(len(self.net_order), dtype=float)
         self.infinity_weight_sum = 0.0
+        self.window_weight_sum = 0.0
+        self.window_potential_sum = 0.0
         self.net_hit_counts = np.zeros(len(self.net_order), dtype=int)
         self.infinity_hits = 0
+        self.window_hits = 0
         self.unresolved_walks = 0
 
     def update(self, outcome) -> bool:
@@ -70,7 +77,7 @@ class CapacitanceRowAccumulator:
         termination = _outcome_value(outcome, "termination")
         hit_conductor = _outcome_value(outcome, "hit_conductor")
 
-        contribution = np.zeros(len(self.net_order) + 1, dtype=float)
+        contribution = np.zeros(len(self.net_order) + 2, dtype=float)
         if termination == "hit_conductor":
             target_net = self.conductor_to_net[hit_conductor]
             target_index = self.net_index[target_net]
@@ -78,9 +85,17 @@ class CapacitanceRowAccumulator:
             self.raw_weight_sums[target_index] += omega
             self.net_hit_counts[target_index] += 1
         elif termination == "escaped":
-            contribution[-1] = omega
+            contribution[self.infinity_index] = omega
             self.infinity_weight_sum += omega
             self.infinity_hits += 1
+        elif termination == "hit_window":
+            self.finite_window = True
+            contribution[self.window_index] = omega
+            self.window_weight_sum += omega
+            self.window_potential_sum += omega * float(
+                _outcome_value(outcome, "wall_potential", 0.0)
+            )
+            self.window_hits += 1
         elif termination == "max_hops":
             self.unresolved_walks += 1
         else:
@@ -126,7 +141,7 @@ class CapacitanceRowAccumulator:
         """Return the current H-independent statistics for convergence checks."""
 
         standard_error = self._weight_standard_error()
-        return {
+        result = {
             "walk_count": self.walk_count,
             "statistical_sample_count": self.sample_count,
             "net_order": list(self.net_order),
@@ -148,6 +163,7 @@ class CapacitanceRowAccumulator:
             },
             "pair_complete": self.pending_inward is None,
         }
+        return result
 
     def finalize(self, H: float) -> dict:
         """Convert the running estimator into a capacitance-row result."""
@@ -159,11 +175,17 @@ class CapacitanceRowAccumulator:
         if not np.isfinite(H) or H < 0.0:
             raise ValueError("H must be finite and non-negative.")
 
-        mean_finite = self.mean[:-1]
+        net_count = len(self.net_order)
+        mean_finite = self.mean[:net_count]
         geometric_values = H * mean_finite
         physical_values = E0 * L_UNIT * geometric_values
-        geometric_infinity = H * self.mean[-1]
+        geometric_infinity = H * self.mean[self.infinity_index]
         infinity_capacitance = E0 * L_UNIT * geometric_infinity
+        geometric_window = H * self.mean[self.window_index]
+        window_capacitance = E0 * L_UNIT * geometric_window
+        window_potential_contribution = (
+            E0 * L_UNIT * H * self.window_potential_sum / self.walk_count
+        )
 
         weight_standard_error = self._weight_standard_error()
         if weight_standard_error is not None:
@@ -197,6 +219,9 @@ class CapacitanceRowAccumulator:
             infinity_weight_se = None
             infinity_geometric_se = None
             infinity_physical_se = None
+            window_weight_se = None
+            window_geometric_se = None
+            window_physical_se = None
         else:
             weight_se_row = {
                 name: float(weight_standard_error[index])
@@ -210,15 +235,31 @@ class CapacitanceRowAccumulator:
                 name: float(physical_standard_error[index])
                 for index, name in enumerate(self.net_order)
             }
-            infinity_weight_se = float(weight_standard_error[-1])
-            infinity_geometric_se = float(geometric_standard_error[-1])
-            infinity_physical_se = float(physical_standard_error[-1])
+            infinity_weight_se = float(
+                weight_standard_error[self.infinity_index]
+            )
+            infinity_geometric_se = float(
+                geometric_standard_error[self.infinity_index]
+            )
+            infinity_physical_se = float(
+                physical_standard_error[self.infinity_index]
+            )
+            window_weight_se = float(
+                weight_standard_error[self.window_index]
+            )
+            window_geometric_se = float(
+                geometric_standard_error[self.window_index]
+            )
+            window_physical_se = float(
+                physical_standard_error[self.window_index]
+            )
 
         unresolved_rate = self.unresolved_walks / self.walk_count
         row_sum_finite = float(sum(capacitance_row.values()))
         row_sum_with_infinity = row_sum_finite + infinity_capacitance
+        row_sum_with_boundary = row_sum_with_infinity + window_capacitance
 
-        return {
+        result = {
             "master_net": self.master_net,
             "net_order": self.net_order,
             "num_walks": self.walk_count,
@@ -251,6 +292,23 @@ class CapacitanceRowAccumulator:
             "row_sum_finite_F": row_sum_finite,
             "row_sum_with_infinity_F": float(row_sum_with_infinity),
         }
+        if self.finite_window:
+            result.update(
+                {
+                    "window_weight_sum": float(self.window_weight_sum),
+                    "window_hits": self.window_hits,
+                    "geometric_window": float(geometric_window),
+                    "window_capacitance_F": float(window_capacitance),
+                    "window_potential_contribution_F": float(
+                        window_potential_contribution
+                    ),
+                    "window_weight_standard_error": window_weight_se,
+                    "window_geometric_standard_error": window_geometric_se,
+                    "window_standard_error_F": window_physical_se,
+                    "row_sum_with_boundary_F": float(row_sum_with_boundary),
+                }
+            )
+        return result
 
 
 def calculate_capacitance_row(
@@ -273,6 +331,11 @@ def calculate_capacitance_row(
         conductors,
         master_vgss,
         first_transition_mode=first_transition_mode,
+        finite_window=any(
+            _outcome_value(walk, "termination") == "hit_window"
+            or _outcome_value(walk, "reflection_count", 0) > 0
+            for walk in walks
+        ),
     )
     for walk in walks:
         accumulator.update(walk)
@@ -297,6 +360,7 @@ def assemble_capacitance_matrix(
 
     matrix = np.zeros((len(net_order), len(net_order)), dtype=float)
     infinity_column = np.zeros(len(net_order), dtype=float)
+    window_column = np.zeros(len(net_order), dtype=float)
 
     for row_index, master_net in enumerate(net_order):
         row_result = row_by_master[master_net]
@@ -307,6 +371,9 @@ def assemble_capacitance_matrix(
 
         infinity_column[row_index] = float(
             row_result["infinity_capacitance_F"]
+        )
+        window_column[row_index] = float(
+            row_result.get("window_capacitance_F", 0.0)
         )
 
     difference = matrix - matrix.T
@@ -327,7 +394,7 @@ def assemble_capacitance_matrix(
         else None
     )
 
-    return {
+    result = {
         "net_order": net_order,
         "matrix_F": matrix.tolist(),
         "infinity_column_F": infinity_column.tolist(),
@@ -337,6 +404,9 @@ def assemble_capacitance_matrix(
         "all_rows_complete": all(bool(row["is_complete"]) for row in row_results),
         "all_rows_converged": all_rows_converged,
     }
+    if any("window_capacitance_F" in row for row in row_results):
+        result["window_column_F"] = window_column.tolist()
+    return result
 
 
 def print_capacitance_row(row_result: Mapping) -> None:
@@ -353,6 +423,12 @@ def print_capacitance_row(row_result: Mapping) -> None:
         f"{master_net}, {INFINITY_LABEL}] = "
         f"{row_result['infinity_capacitance_F']:.6e} F"
     )
+    if row_result.get("window_hits", 0):
+        print(
+            "  C["
+            f"{master_net}, Window] = "
+            f"{row_result['window_capacitance_F']:.6e} F"
+        )
     print(
         "  finite row sum = "
         f"{row_result['row_sum_finite_F']:.6e} F"
@@ -361,6 +437,11 @@ def print_capacitance_row(row_result: Mapping) -> None:
         "  row sum including infinity = "
         f"{row_result['row_sum_with_infinity_F']:.6e} F"
     )
+    if row_result.get("window_hits", 0):
+        print(
+            "  row sum including window = "
+            f"{row_result['row_sum_with_boundary_F']:.6e} F"
+        )
     print(
         "  unresolved walks = "
         f"{row_result['unresolved_walks']} "

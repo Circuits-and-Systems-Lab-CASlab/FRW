@@ -110,6 +110,31 @@ def test_capacitance_accumulates_touching_blocks_by_net() -> None:
     assert result["raw_weight_sums"]["Net2"] == pytest.approx(0.0)
 
 
+def test_capacitance_accumulates_dirichlet_window_hits() -> None:
+    conductors = [
+        _conductor("C1", Bounds(0, 1, 0, 1, 0, 1)),
+    ]
+    master_vgss = _MasterVGSS(find_touching_nets(conductors)[0])
+    accumulator = CapacitanceRowAccumulator(conductors, master_vgss)
+
+    accumulator.update(
+        {
+            "omega": 2.0,
+            "termination": "hit_window",
+            "hit_conductor": None,
+            "wall_potential": 3.0,
+        }
+    )
+    result = accumulator.finalize(H=4.0)
+
+    assert result["window_hits"] == 1
+    assert result["geometric_window"] == pytest.approx(8.0)
+    assert result["window_capacitance_F"] == pytest.approx(8.0 * E0 * L_UNIT)
+    assert result["window_potential_contribution_F"] == pytest.approx(
+        24.0 * E0 * L_UNIT
+    )
+
+
 def test_stratified_accumulator_uses_complete_pairs_for_statistics() -> None:
     conductors = [
         _conductor("C1", Bounds(0, 1, 0, 1, 0, 1)),

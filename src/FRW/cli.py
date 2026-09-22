@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from bgs.matlab_parser import parse_matlab_geometry
+from bgs.models import Bounds
 from bgs.sampling import VGSSSamplingStats
 from bgs.vgss import build_all_net_vgss
 from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
@@ -14,11 +15,13 @@ from .capacitance import (
     assemble_capacitance_matrix,
     print_capacitance_matrix,
 )
+from .boundary import validate_window
 from .metrics import MetricsAccumulator
 from .convergence import check_row_convergence
 from .random_walk import get_system_bounds, run_one_walk
 from .visualization import extract_walk_trace, visualize_3d_walk
 
+WARNING_WALKS_THRESHOLD = 0.8  # 80% of max walks
 
 def _select_master_vgss(all_net_vgss, master_name: str | None = None):
     if not all_net_vgss:
@@ -145,6 +148,43 @@ def _build_parser() -> argparse.ArgumentParser:
             "Default: 4."
         ),
     )
+    parser.add_argument(
+        "--max-hops",
+        "--max-steps",
+        dest="max_hops",
+        type=int,
+        default=200,
+        help=(
+            "Maximum cube transitions allowed in one walk. "
+            "--max-steps is kept as a compatibility alias. Default: 200."
+        ),
+    )
+    parser.add_argument(
+        "--window",
+        type=float,
+        nargs=6,
+        metavar=("XMIN", "XMAX", "YMIN", "YMAX", "ZMIN", "ZMAX"),
+        help=(
+            "Finite window bounds. If supplied, axes are Dirichlet unless "
+            "listed by --neumann-axes."
+        ),
+    )
+    parser.add_argument(
+        "--neumann-axes",
+        nargs="*",
+        choices=("x", "y", "z"),
+        default=(),
+        help=(
+            "Reflecting axes of the finite window, for example "
+            "--neumann-axes z. The other axes remain Dirichlet."
+        ),
+    )
+    parser.add_argument(
+        "--wall-potential",
+        type=float,
+        default=0.0,
+        help="Potential of the Dirichlet window faces. Default: 0.0.",
+    )
 
     return parser
 
@@ -174,6 +214,10 @@ def _run_master_row(
     relative_tolerance: float | None,
     minimum_target_hits: int | None,
     record_visualization: bool,
+    window: Bounds | None,
+    neumann_axes: tuple[str, ...],
+    wall_potential: float,
+    max_hops: int,
 ) -> dict:
     """Calculate one independently sampled capacitance-matrix row."""
 
@@ -182,6 +226,7 @@ def _run_master_row(
     system_center, system_size = get_system_bounds(conductors)
     math_kill_radius = system_size * 500_000.0
     first_transition_mode = STRATIFIED_FIRST_TRANSITION
+    validate_window(conductors, window, neumann_axes)
 
     print(f"starting master-net ({master_vgss.net.name})")
     sampling_stats = VGSSSamplingStats()
@@ -189,6 +234,7 @@ def _run_master_row(
         conductors,
         master_vgss,
         first_transition_mode=first_transition_mode,
+        finite_window=window is not None,
     )
     metrics_accumulator = MetricsAccumulator(conductors, master_vgss)
     visualization_outcome = None
@@ -209,6 +255,10 @@ def _run_master_row(
             math_kill_radius=math_kill_radius,
             first_transition_mode=first_transition_mode,
             record_path=record_path,
+            window=window,
+            neumann_axes=neumann_axes,
+            wall_potential=wall_potential,
+            max_hops=max_hops,
         )
         sample_completed = capacitance_accumulator.update(outcome)
         metrics_accumulator.update(outcome)
@@ -220,6 +270,9 @@ def _run_master_row(
             continue
 
         completed_walks = capacitance_accumulator.walk_count
+
+        if(completed_walks == WARNING_WALKS_THRESHOLD * walk_limit):
+            print(f"\033[33mWARNING: \033[0m {WARNING_WALKS_THRESHOLD*100}% of max walks have been completed for master-net ({master_vgss.net.name}) and convergence has not been reached. Continuing...")
 
         # Determine whether to check convergence at this point.
         should_check = (completed_walks >= minimum_walks and ( completed_walks % check_every == 0 or completed_walks == walk_limit ) )
@@ -281,6 +334,23 @@ def _run_master_row(
         "metrics": metrics,
         "capacitance": capacitance_row,
     }
+    if window is not None:
+        export_data["boundary"] = {
+            "window": {
+                "xmin": window.xmin,
+                "xmax": window.xmax,
+                "ymin": window.ymin,
+                "ymax": window.ymax,
+                "zmin": window.zmin,
+                "zmax": window.zmax,
+            },
+            "neumann_axes": list(neumann_axes),
+            "dirichlet_axes": [
+                axis for axis in ("x", "y", "z")
+                if axis not in neumann_axes
+            ],
+            "wall_potential": float(wall_potential),
+        }
     if visualization_outcome is not None:
         export_data["visualization_walk"] = visualization_outcome.as_dict()
 
@@ -316,6 +386,27 @@ def main(argv=None) -> None:
         parser.error("--seed must be non-negative")
     if args.workers <= 0:
         parser.error("--workers must be positive")
+    if args.max_hops <= 0:
+        parser.error("--max-hops must be positive")
+    if not np.isfinite(args.wall_potential):
+        parser.error("--wall-potential must be finite")
+
+    neumann_axes = tuple(dict.fromkeys(args.neumann_axes))
+    if args.window is None:
+        window = None
+        if neumann_axes:
+            parser.error("--neumann-axes requires --window")
+        if args.wall_potential != 0.0:
+            parser.error("--wall-potential requires --window")
+    else:
+        try:
+            window = Bounds(*args.window)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if len(neumann_axes) == 3 and args.wall_potential != 0.0:
+            parser.error(
+                "--wall-potential has no effect when every axis is Neumann"
+            )
 
     if args.walks is not None:
         if args.walks <= 0 or args.walks % 2 != 0:
@@ -363,10 +454,17 @@ def main(argv=None) -> None:
         print("No conductors found in the file.")
         raise SystemExit(1)
 
+    try:
+        validate_window(system_conductors, window, neumann_axes)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     all_net_vgss = build_all_net_vgss(
         system_conductors,
         scale_factor=args.scale_factor,
         max_distance=args.max_distance,
+        window=window,
+        neumann_axes=neumann_axes,
     )
 
     run_all_nets = args.master is None
@@ -403,6 +501,10 @@ def main(argv=None) -> None:
                 relative_tolerance=relative_tolerance,
                 minimum_target_hits=minimum_target_hits,
                 record_visualization=args.visualization,
+                window=window,
+                neumann_axes=neumann_axes,
+                wall_potential=args.wall_potential,
+                max_hops=args.max_hops,
             )
             row_results[row_index] = result
             _print_row_progress(completed, row_count, result)
@@ -429,6 +531,10 @@ def main(argv=None) -> None:
                     relative_tolerance=relative_tolerance,
                     minimum_target_hits=minimum_target_hits,
                     record_visualization=args.visualization,
+                    window=window,
+                    neumann_axes=neumann_axes,
+                    wall_potential=args.wall_potential,
+                    max_hops=args.max_hops,
                 )
                 future_to_net[future] = master_vgss.net.name
 

@@ -34,6 +34,7 @@ class MetricsAccumulator:
         )
         # Exact median and p95 require only one integer per walk.
         self.hop_counts = []
+        self.reflection_count = 0
 
     def update(self, outcome) -> None:
         termination = _outcome_value(outcome, "termination")
@@ -42,10 +43,15 @@ class MetricsAccumulator:
         if hop_count is None:
             hop_count = len(_outcome_value(outcome, "path_data", []))
 
-        if termination not in self.termination_counts:
+        if termination == "hit_window":
+            self.termination_counts.setdefault("hit_window", 0)
+        elif termination not in self.termination_counts:
             raise ValueError(f"Unknown walk termination: {termination!r}")
         self.termination_counts[termination] += 1
         self.hop_counts.append(int(hop_count))
+        self.reflection_count += int(
+            _outcome_value(outcome, "reflection_count", 0)
+        )
 
         if termination != "hit_conductor":
             return
@@ -65,7 +71,7 @@ class MetricsAccumulator:
             for name, count in self.termination_counts.items()
         }
 
-        return {
+        result = {
             "conductor_hit_counts": dict(self.conductor_hit_counts),
             "net_hit_counts": dict(self.net_hit_counts),
             "self_net_hits": self_net_hits,
@@ -74,6 +80,9 @@ class MetricsAccumulator:
             "termination_rates": termination_rates,
             "hop_statistics": _calculate_hop_statistics(self.hop_counts),
         }
+        if "hit_window" in self.termination_counts or self.reflection_count:
+            result["reflection_count"] = self.reflection_count
+        return result
 
 
 def calculate_frw_metrics(walks, conductors, master_vgss):
@@ -119,6 +128,7 @@ def print_metrics(metrics: dict) -> None:
         "net_hit_counts",
         "self_net_hits",
         "other_net_hits",
+        "reflection_count",
         "hop_statistics",
     ):
         if key not in metrics:

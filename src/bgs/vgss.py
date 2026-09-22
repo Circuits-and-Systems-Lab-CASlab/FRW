@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .gaussian_surface import BGSGenerationResult, generate_bgs
-from .models import Conductor, GaussianSurface
+from .models import Bounds, Conductor, GaussianSurface
 from .sampling import (
     ImportanceFunction,
     VGSSSamplingContext,
@@ -39,6 +39,8 @@ def build_net_vgss(
     importance_function: ImportanceFunction = uniform_importance,
     upper_bound: float = 1.0,
     abs_tol: float = 1e-12,
+    window: Bounds | None = None,
+    neumann_axes: Iterable[str] = (),
 ) -> NetVGSS:
     """
     Generate the individual BGSs and prepare Algorithm 4.1 for one net.
@@ -58,6 +60,9 @@ def build_net_vgss(
             scale_factor=scale_factor,
             max_distance=max_distance,
             touch_policy="skip",
+            window=window,
+            neumann_axes=neumann_axes,
+            abs_tol=abs_tol,
         )
         if result is None:
             raise RuntimeError(
@@ -84,6 +89,8 @@ def build_all_net_vgss(
     importance_function: ImportanceFunction = uniform_importance,
     upper_bound: float = 1.0,
     abs_tol: float = 1e-12,
+    window: Bounds | None = None,
+    neumann_axes: Iterable[str] = (),
 ) -> tuple[NetVGSS, ...]:
     """Detect every net and prepare one independent VGSS for each net."""
 
@@ -97,6 +104,8 @@ def build_all_net_vgss(
             importance_function=importance_function,
             upper_bound=upper_bound,
             abs_tol=abs_tol,
+            window=window,
+            neumann_axes=neumann_axes,
         )
         for net in nets
     )
@@ -111,6 +120,8 @@ def build_vgss_for_conductor(
     importance_function: ImportanceFunction = uniform_importance,
     upper_bound: float = 1.0,
     abs_tol: float = 1e-12,
+    window: Bounds | None = None,
+    neumann_axes: Iterable[str] = (),
 ) -> NetVGSS:
     """Prepare the VGSS for the net containing a selected conductor block."""
 
@@ -124,4 +135,6 @@ def build_vgss_for_conductor(
         importance_function=importance_function,
         upper_bound=upper_bound,
         abs_tol=abs_tol,
+        window=window,
+        neumann_axes=neumann_axes,
     )

@@ -66,7 +66,7 @@ def test_cli_defaults_to_adaptive_convergence() -> None:
     args = _build_parser().parse_args(["input.m"])
 
     assert args.walks is None
-    assert args.max_walks == 100000
+    assert args.max_walks == 1000000
     assert args.min_walks == 2000
     assert args.check_every == 200
     assert args.tolerance == 0.03
