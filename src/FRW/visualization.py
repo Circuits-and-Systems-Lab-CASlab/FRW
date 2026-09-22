@@ -35,6 +35,8 @@ def extract_walk_trace(walk_data):
         for step in path_data
     ]
     terminal = walk_data.get("hit_conductor")
+    if terminal is None and walk_data.get("termination") == "hit_window":
+        terminal = "Window (Dirichlet)"
     if terminal is None:
         terminal = walk_data.get("termination", "Unknown")
 

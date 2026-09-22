@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from FRW.cli import _select_master_vgss
+from FRW.cli import _build_parser, _select_master_vgss
 
 
 def test_select_master_vgss_by_name() -> None:
@@ -12,3 +12,23 @@ def test_select_master_vgss_by_name() -> None:
     selected = _select_master_vgss(all_net_vgss, "C2")
 
     assert selected is all_net_vgss[1]
+
+
+def test_cli_accepts_a_mixed_finite_window() -> None:
+    args = _build_parser().parse_args(
+        [
+            "input.m",
+            "--window",
+            "-10",
+            "30",
+            "-10",
+            "15",
+            "0",
+            "3",
+            "--neumann-axes",
+            "z",
+        ]
+    )
+
+    assert args.window == [-10.0, 30.0, -10.0, 15.0, 0.0, 3.0]
+    assert args.neumann_axes == ["z"]

@@ -1,13 +1,22 @@
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
+from bgs.models import Bounds
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
 from GGFT.ggft import (
     FIRST_TRANSITION_MODES,
     STANDARD_FIRST_TRANSITION,
     STRATIFIED_FIRST_TRANSITION,
     CubeGFT,
+)
+from .boundary import (
+    conductor_distance,
+    inside_window,
+    reflect_point,
+    validate_window,
+    window_distance,
 )
 
 
@@ -25,6 +34,8 @@ class WalkOutcome:
     termination: str
     hop_count: int
     path_data: list[dict] | None = None
+    reflection_count: int = 0
+    wall_potential: float | None = None
 
     def as_dict(self) -> dict:
         result = {
@@ -40,6 +51,10 @@ class WalkOutcome:
         }
         if self.path_data is not None:
             result["path_data"] = self.path_data
+        if self.reflection_count:
+            result["reflection_count"] = self.reflection_count
+        if self.wall_potential is not None:
+            result["wall_potential"] = self.wall_potential
         return result
 
 
@@ -57,22 +72,62 @@ def get_system_bounds(conductors):
     return system_center, system_size
 
 
-def nearest_conductor(point, conductors):
+def nearest_conductor(point, conductors, window=None, neumann_axes=()):
     """Return the index and distance of the conductor nearest to a point."""
 
     if not conductors:
         raise ValueError("At least one conductor is required.")
 
+    if not neumann_axes:
+        nearest_idx = 0
+        min_dist = conductors[0].distance_to_point(point)
+        for index in range(1, len(conductors)):
+            distance = conductors[index].distance_to_point(point)
+            if distance < min_dist:
+                nearest_idx = index
+                min_dist = distance
+        return nearest_idx, min_dist
+
     nearest_idx = 0
-    min_dist = conductors[0].distance_to_point(point)
+    min_dist = conductor_distance(
+        point,
+        conductors[0],
+        window,
+        neumann_axes,
+    )
 
     for index in range(1, len(conductors)):
-        distance = conductors[index].distance_to_point(point)
+        distance = conductor_distance(
+            point,
+            conductors[index],
+            window,
+            neumann_axes,
+        )
         if distance < min_dist:
             nearest_idx = index
             min_dist = distance
 
     return nearest_idx, min_dist
+
+
+def walk_radius(point, conductors, window=None, neumann_axes=()):
+    """Return the nearest conductor, cube radius, and wall-limit flag."""
+
+    nearest_idx, radius = nearest_conductor(
+        point,
+        conductors,
+        window,
+        neumann_axes,
+    )
+    wall_is_nearest = False
+
+    if window is not None:
+        wall_radius = window_distance(point, window, neumann_axes)
+        if wall_radius <= radius:
+            radius = wall_radius
+            wall_is_nearest = True
+
+    return nearest_idx, radius, wall_is_nearest
 
 
 # ==========================================
@@ -139,6 +194,9 @@ def run_one_walk(
     max_hops=200,
     first_transition_mode=STANDARD_FIRST_TRANSITION,
     record_path=False,
+    window: Bounds | None = None,
+    neumann_axes=(),
+    wall_potential=0.0,
 ) -> WalkOutcome:
     """Run one physical FRW walk and return its compact terminal outcome."""
 
@@ -154,9 +212,28 @@ def run_one_walk(
 
     hit_target = None
     termination = "max_hops"
+    reflection_count = 0
+
+    if window is not None and not inside_window(
+        current_p,
+        window,
+        tolerance=1.0e-12,
+    ):
+        raise ValueError(
+            "A VGSS start point lies outside the finite window."
+        )
 
     # ---------- first transition ----------
-    _nearest_idx, min_dist = nearest_conductor(current_p, conductors)
+    _nearest_idx, min_dist, _wall_is_nearest = walk_radius(
+        current_p,
+        conductors,
+        window,
+        neumann_axes,
+    )
+    if not math.isfinite(min_dist) or min_dist <= 0.0:
+        raise RuntimeError(
+            "The first-transition cube has a non-positive radius."
+        )
     side_a = 2 * min_dist
 
     first_transition_stratum = None
@@ -198,30 +275,41 @@ def run_one_walk(
     probability = table_probability
     current_p = next_point
 
+    if window is not None:
+        current_p, reflected, absorbed = reflect_point(current_p, window, neumann_axes, )
+        reflection_count += reflected
+        if absorbed: termination = "hit_window"
+
     # ---------- remaining transitions ----------
     for _hop in range(max_hops):
-        dist_to_center = np.max(np.abs(current_p - system_center))
-        if dist_to_center > math_kill_radius:
-            hit_target = "Infinity (Ground)"
-            termination = "escaped"
+        if termination != "max_hops":
             break
 
-        nearest_idx, min_dist = nearest_conductor(current_p, conductors)
+        if window is None:
+            dist_to_center = np.max(np.abs(current_p - system_center))
+            if dist_to_center > math_kill_radius:
+                hit_target = "Infinity (Ground)"
+                termination = "escaped"
+                break
+
+        nearest_idx, min_dist, wall_is_nearest = walk_radius(
+            current_p,
+            conductors,
+            window,
+            neumann_axes,
+        )
         side_a = 2 * min_dist
         hop_count += 1
 
         if current_walk_path is not None:
-            current_walk_path.append(
-                {
-                    "center": current_p.tolist(),
-                    "a": float(side_a),
-                    "P(r,r')": float(probability),
-                }
-            )
+            current_walk_path.append({ "center": current_p.tolist(), "a": float(side_a), "P(r,r')": float(probability), } )
 
         if min_dist < 1e-4:
-            hit_target = conductors[nearest_idx].name
-            termination = "hit_conductor"
+            if wall_is_nearest:
+                termination = "hit_window"
+            else:
+                hit_target = conductors[nearest_idx].name
+                termination = "hit_conductor"
             break
 
         current_p, _index, probability = gft.sample_next_point(
@@ -229,6 +317,13 @@ def run_one_walk(
             cube_half_size=min_dist,
             rng=rng,
         )
+
+        if window is not None:
+            current_p, reflected, absorbed = reflect_point(current_p, window, neumann_axes, )
+            reflection_count += reflected
+            if absorbed:
+                termination = "hit_window"
+                break
 
     return WalkOutcome(
         start_point=start_point.tolist(),
@@ -241,6 +336,8 @@ def run_one_walk(
         termination=termination,
         hop_count=hop_count,
         path_data=current_walk_path,
+        reflection_count=reflection_count,
+        wall_potential=( float(wall_potential) if termination == "hit_window" else None ),
     )
 
 
@@ -251,6 +348,9 @@ def run_frw_geometry(
     num_walks=1000,
     max_hops=200,
     first_transition_mode=STANDARD_FIRST_TRANSITION,
+    window: Bounds | None = None,
+    neumann_axes=(),
+    wall_potential=0.0,
 ):
     """Compatibility batch API that stores every walk and its full path.
 
@@ -259,6 +359,7 @@ def run_frw_geometry(
     ``FRW.capacitance``.
     """
     _validate_run_configuration(num_walks, first_transition_mode)
+    validate_window(conductors, window, neumann_axes)
 
     sys_center, sys_size = get_system_bounds(conductors)
     math_kill_radius = sys_size * 500_000.0
@@ -284,6 +385,9 @@ def run_frw_geometry(
             max_hops=max_hops,
             first_transition_mode=first_transition_mode,
             record_path=True,
+            window=window,
+            neumann_axes=neumann_axes,
+            wall_potential=wall_potential,
         )
         all_walk_data.append(outcome.as_dict())
 
@@ -292,7 +396,7 @@ def run_frw_geometry(
     context = master_vgss.sampling_context
     h_estimate = sampling_stats.estimate_H(context)
 
-    return {
+    result = {
         "master_net": master_vgss.net.name,
         "Sg": sampling_stats.estimate_surface_area(context),
         "mean_p": sampling_stats.estimate_mean_p(),
@@ -301,6 +405,18 @@ def run_frw_geometry(
         "first_transition_mode": first_transition_mode,
         "walks": all_walk_data,
     }
+    if window is not None:
+        result["window"] = {
+            "xmin": window.xmin,
+            "xmax": window.xmax,
+            "ymin": window.ymin,
+            "ymax": window.ymax,
+            "zmin": window.zmin,
+            "zmax": window.zmax,
+        }
+        result["neumann_axes"] = list(neumann_axes)
+        result["wall_potential"] = float(wall_potential)
+    return result
 
 
 if __name__ == "__main__":

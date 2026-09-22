@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import math
 from typing import Iterable
 
+import numpy as np
+
 from .distances import (
     block_distance,
     boxes_overlap,
@@ -37,6 +39,38 @@ class BGSGenerationResult:
     used_isolated_fallback: bool
 
 
+_DIRECTION_AXIS = {
+    "NX": "x",
+    "PX": "x",
+    "NY": "y",
+    "PY": "y",
+    "NZ": "z",
+    "PZ": "z",
+}
+
+
+def _window_clearance(master: Conductor, window: Bounds, direction: str) -> float:
+    return {
+        "NX": master.bounds.xmin - window.xmin,
+        "PX": window.xmax - master.bounds.xmax,
+        "NY": master.bounds.ymin - window.ymin,
+        "PY": window.ymax - master.bounds.ymax,
+        "NZ": master.bounds.zmin - window.zmin,
+        "PZ": window.zmax - master.bounds.zmax,
+    }[direction]
+
+
+def _face_coordinate(bounds: Bounds, direction: str) -> float:
+    return {
+        "NX": bounds.xmin,
+        "PX": bounds.xmax,
+        "NY": bounds.ymin,
+        "PY": bounds.ymax,
+        "NZ": bounds.zmin,
+        "PZ": bounds.zmax,
+    }[direction]
+
+
 def _unsupported_touch_message(master: Conductor, other: Conductor) -> str:
     return (
         f"{master.name} and {other.name} touch or overlap. "
@@ -52,6 +86,9 @@ def generate_bgs(
     scale_factor: float = 1.0,
     max_distance: float = 10.0,
     touch_policy: str = "skip",
+    window: Bounds | None = None,
+    neumann_axes: Iterable[str] = (),
+    abs_tol: float = 1.0e-12,
 ) -> BGSGenerationResult | None:
 
     if scale_factor < 1.0:
@@ -60,6 +97,12 @@ def generate_bgs(
         raise ValueError("max_distance must be positive.")
     if touch_policy not in {"skip", "error"}:
         raise ValueError("touch_policy must be either 'skip' or 'error'.")
+    neumann = frozenset(neumann_axes)
+    unknown_axes = neumann.difference(("x", "y", "z"))
+    if unknown_axes:
+        raise ValueError("Unknown Neumann axes: " + ", ".join(sorted(unknown_axes)))
+    if window is None and neumann:
+        raise ValueError("Neumann axes require a finite window.")
 
     #in this section we check if conductors overlap (error) or they are touching (skip)
     all_conductors = list(all_conductors)
@@ -125,11 +168,61 @@ def generate_bgs(
             for direction, value in initial.items()
         }
 
+    if window is not None:
+        for direction in DIRECTIONS:
+            clearance = _window_clearance(master, window, direction)
+            if clearance < -abs_tol:
+                raise ValueError(
+                    f"Conductor {master.name!r} lies outside the finite window."
+                )
+
+            clearance = max(0.0, float(clearance))
+            if _DIRECTION_AXIS[direction] in neumann:
+                allowed_extent = clearance
+            else:
+                wall_coordinate = _face_coordinate(window, direction)
+                margin = max(
+                    abs_tol * 32.0,
+                    np.finfo(float).eps
+                    * max(1.0, abs(wall_coordinate))
+                    * 64.0,
+                )
+                allowed_extent = clearance - margin
+                if allowed_extent <= 0.0:
+                    raise ValueError(
+                        f"Conductor {master.name!r} touches the Dirichlet "
+                        f"{_DIRECTION_AXIS[direction]} wall."
+                    )
+
+            final[direction] = min(final[direction], allowed_extent)
+
     surface_bounds = master.bounds.expanded(final)
+    surface_faces = make_surface_faces(surface_bounds)
+
+    if window is not None and neumann:
+        retained_faces = []
+        for face in surface_faces:
+            lies_on_neumann_wall = (
+                _DIRECTION_AXIS[face.direction] in neumann
+                and math.isclose(
+                    _face_coordinate(surface_bounds, face.direction),
+                    _face_coordinate(window, face.direction),
+                    rel_tol=0.0,
+                    abs_tol=abs_tol * 32.0,
+                )
+            )
+            if not lies_on_neumann_wall:
+                retained_faces.append(face)
+        surface_faces = tuple(retained_faces)
+        if not surface_faces:
+            raise ValueError(
+                f"Window clipping removed every BGS face for {master.name!r}."
+            )
+
     gaussian_surface = GaussianSurface(
         master_conductor=master.name,
         bounds=surface_bounds,
-        faces=make_surface_faces(surface_bounds),
+        faces=surface_faces,
     )
 
     return BGSGenerationResult(
@@ -149,6 +242,9 @@ def generate_all_bgs(
     scale_factor: float = 1.0,
     max_distance: float = 10.0,
     touch_policy: str = "skip",
+    window: Bounds | None = None,
+    neumann_axes: Iterable[str] = (),
+    abs_tol: float = 1.0e-12,
 ) -> list[BGSGenerationResult]:
     conductor_list = list(conductors)
     results: list[BGSGenerationResult] = []
@@ -160,6 +256,9 @@ def generate_all_bgs(
             scale_factor=scale_factor,
             max_distance=max_distance,
             touch_policy=touch_policy,
+            window=window,
+            neumann_axes=neumann_axes,
+            abs_tol=abs_tol,
         )
         if result is not None:
             results.append(result)
