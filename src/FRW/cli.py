@@ -1,28 +1,77 @@
 import argparse
 import json
+import sys
 import time
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 
 from bgs.matlab_parser import parse_matlab_geometry
-from bgs.models import Bounds
+from bgs.models import Bounds, Conductor
 from bgs.sampling import VGSSSamplingStats
 from bgs.vgss import build_all_net_vgss
 from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
 from .capacitance import (
     CapacitanceRowAccumulator,
     assemble_capacitance_matrix,
+    export_capacitance_csv,
+    export_spice_subcircuit,
     print_capacitance_matrix,
 )
 from .boundary import validate_window
 from .metrics import MetricsAccumulator
 from .convergence import check_row_convergence
 from .random_walk import get_system_bounds, run_one_walk
-from .visualization import extract_walk_trace, visualize_3d_walk
+from .visualization import (
+    extract_walk_trace,
+    visualize_3d_walk,
+    visualize_3d_walk_html,
+)
 
 WARNING_WALKS_THRESHOLD = 0.8  # 80% of max walks
+
+
+def print_geometry_summary(
+    input_file: Path | str,
+    conductors: Sequence[Conductor],
+    all_net_vgss: Sequence,
+    window: Bounds | None = None,
+    neumann_axes: tuple[str, ...] = (),
+) -> None:
+    """Print an informative visual summary of loaded geometry, nets, and boundaries."""
+    print("=" * 60)
+    print("                 FRW GEOMETRY SUMMARY")
+    print("=" * 60)
+    print(f"Input file: {input_file}")
+    print(f"Total conductors: {len(conductors)}")
+    for c in conductors:
+        print(
+            f"  - {c.name:<8} bounds: X=[{c.min_bounds[0]:.3f}..{c.max_bounds[0]:.3f}] "
+            f"Y=[{c.min_bounds[1]:.3f}..{c.max_bounds[1]:.3f}] "
+            f"Z=[{c.min_bounds[2]:.3f}..{c.max_bounds[2]:.3f}]"
+        )
+
+    print(f"\nElectrical nets ({len(all_net_vgss)}):")
+    for net_vgss in all_net_vgss:
+        cond_names = ", ".join(c.name for c in net_vgss.net.conductors)
+        total_area = sum(s.area for s in net_vgss.surfaces)
+        print(f"  - {net_vgss.net.name:<8} conductors: [{cond_names}] (VGSS area: {total_area:.4e})")
+
+    print("\nDomain Boundary Conditions:")
+    if window is not None:
+        bc_type = "Neumann reflecting: " + ", ".join(neumann_axes) if neumann_axes else "Dirichlet absorbing (Ground)"
+        print(
+            f"  Window bounds: X=[{window.xmin:.3f}..{window.xmax:.3f}] "
+            f"Y=[{window.ymin:.3f}..{window.ymax:.3f}] "
+            f"Z=[{window.zmin:.3f}..{window.zmax:.3f}]"
+        )
+        print(f"  Faces: {bc_type}")
+    else:
+        print("  Open boundary (walks escape to infinity)")
+    print("=" * 60 + "\n")
+
 
 def _select_master_vgss(all_net_vgss, master_name: str | None = None):
     if not all_net_vgss:
@@ -142,7 +191,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workers",
         type=int,
-        default=4,
+        default=5,
         help=(
             "Maximum number of master-net rows to run in parallel. "
             "The actual count is limited by the number of selected rows. "
@@ -186,19 +235,47 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Potential of the Dirichlet window faces. Default: 0.0.",
     )
+    parser.add_argument(
+        "--unit",
+        choices=("pF", "fF", "F", "auto"),
+        default="pF",
+        help="Capacitance unit for table display and exported models. Default: pF.",
+    )
+    parser.add_argument(
+        "--csv",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Export capacitance matrix to CSV. If specified without a path, saves to <output_stem>.csv.",
+    )
+    parser.add_argument(
+        "--spice",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Export lumped capacitance SPICE subcircuit. If specified without a path, saves to <output_stem>.subckt.",
+    )
+    parser.add_argument(
+        "--html",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Export interactive 3D WebGL HTML visualization. If specified without a path, saves to <output_stem>_3d.html.",
+    )
 
     return parser
 
 
 def _row_rng(seed: int, row_index: int) -> np.random.Generator:
     """Return the deterministic RNG stream assigned to one matrix row."""
-
     return np.random.default_rng(np.random.SeedSequence([seed, row_index]))
 
 
 def _worker_count(requested_workers: int, row_count: int) -> int:
     """Do not create more worker processes than there are rows to run."""
-
     return min(requested_workers, row_count)
 
 
@@ -219,6 +296,8 @@ def _run_master_row(
     neumann_axes: tuple[str, ...],
     wall_potential: float,
     max_hops: int,
+    show_progress: bool = True,
+    is_parallel: bool = False,
 ) -> dict:
     """Calculate one independently sampled capacitance-matrix row."""
 
@@ -242,6 +321,9 @@ def _run_master_row(
     convergence_result = None
     convergence_checks = 0
     stop_reason = "maximum_walks" if adaptive else "fixed_walk_count"
+    row_start_time = time.perf_counter()
+    last_milestone_walks = 0
+    last_milestone_time = row_start_time
 
     for walk_index in range(walk_limit):
         record_path = record_visualization and walk_index == 0
@@ -286,9 +368,37 @@ def _run_master_row(
             minimum_target_hits=minimum_target_hits,
         )
         convergence_checks += 1
+
+        if show_progress:
+            now = time.perf_counter()
+            elapsed_row = now - row_start_time
+            ratio = convergence_result.get("final_ratio")
+            ratio_str = f"{ratio:.3e}" if ratio is not None else "eval"
+
+            if not is_parallel and sys.stdout.isatty():
+                target_str = f"{relative_tolerance:.3e}" if relative_tolerance is not None else "auto"
+                print(
+                    f"\r  [{master_vgss.net.name}] {completed_walks:>8,d} walks | "
+                    f"ratio: {ratio_str} (target: {target_str}) | {elapsed_row:>5.1f}s",
+                    end="",
+                    flush=True,
+                )
+            else:
+                if completed_walks - last_milestone_walks >= 100_000 or (now - last_milestone_time >= 15.0):
+                    print(
+                        f"  [{master_vgss.net.name}] {completed_walks:>8,d} walks | "
+                        f"ratio: {ratio_str} | {elapsed_row:.1f}s",
+                        flush=True,
+                    )
+                    last_milestone_walks = completed_walks
+                    last_milestone_time = now
+
         if convergence_result["converged"]:
             stop_reason = "converged"
             break
+
+    if show_progress and not is_parallel and sys.stdout.isatty():
+        print()
 
     if adaptive:
         if convergence_result is None:
@@ -382,7 +492,7 @@ def _print_row_progress(completed: int, total: int, row_result: dict) -> None:
 def main(argv=None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    start_timr = time.time()
+    start_time = time.time()
 
     if args.seed < 0:
         parser.error("--seed must be non-negative")
@@ -467,6 +577,14 @@ def main(argv=None) -> None:
         neumann_axes=neumann_axes,
     )
 
+    print_geometry_summary(
+        filename,
+        system_conductors,
+        all_net_vgss,
+        window=window,
+        neumann_axes=neumann_axes,
+    )
+
     run_all_nets = args.master is None
     nets_to_run = (
         all_net_vgss
@@ -481,6 +599,7 @@ def main(argv=None) -> None:
     row_count = len(nets_to_run)
     active_workers = _worker_count(args.workers, row_count)
     row_results = {}
+    record_visualization = args.visualization or (args.html is not None)
 
 #-----------start the FRW engine-----------
     print("\nExecuting Online Geometric Walk Engine...")
@@ -500,11 +619,13 @@ def main(argv=None) -> None:
                 check_every=check_every,
                 relative_tolerance=relative_tolerance,
                 minimum_target_hits=minimum_target_hits,
-                record_visualization=args.visualization,
+                record_visualization=record_visualization,
                 window=window,
                 neumann_axes=neumann_axes,
                 wall_potential=args.wall_potential,
                 max_hops=args.max_hops,
+                show_progress=True,
+                is_parallel=False,
             )
             row_results[row_index] = result
             _print_row_progress(completed, row_count, result)
@@ -516,7 +637,6 @@ def main(argv=None) -> None:
         with ProcessPoolExecutor(max_workers=active_workers) as executor:
             future_to_net = {}
             for master_vgss in nets_to_run:
-                
                 row_index = net_indices[master_vgss.net.name]
                 future = executor.submit(
                     _run_master_row,
@@ -530,11 +650,13 @@ def main(argv=None) -> None:
                     check_every=check_every,
                     relative_tolerance=relative_tolerance,
                     minimum_target_hits=minimum_target_hits,
-                    record_visualization=args.visualization,
+                    record_visualization=record_visualization,
                     window=window,
                     neumann_axes=neumann_axes,
                     wall_potential=args.wall_potential,
                     max_hops=args.max_hops,
+                    show_progress=True,
+                    is_parallel=True,
                 )
                 future_to_net[future] = master_vgss.net.name
 
@@ -575,12 +697,55 @@ def main(argv=None) -> None:
                 all_net_vgss,
             )
 
+    if args.html is not None:
+        vgss_by_name = { net_vgss.net.name: net_vgss for net_vgss in all_net_vgss }
+        base_html_path = (
+            Path(args.html)
+            if args.html != ""
+            else args.output.parent / f"{args.output.stem}_3d.html"
+        )
+        for result in results:
+            visualization_walk = result.get("visualization_walk")
+            if visualization_walk is None:
+                continue
+            path_points, maximal_cubes, terminal = extract_walk_trace( visualization_walk )
+            if len(results) == 1:
+                save_path = base_html_path
+            else:
+                save_path = base_html_path.parent / f"{base_html_path.stem}_{result['master_net']}.html"
+            out = visualize_3d_walk_html(
+                system_conductors=system_conductors,
+                master_vgss=vgss_by_name[result["master_net"]],
+                path_points=path_points,
+                maximal_cubes=maximal_cubes,
+                terminal=terminal,
+                all_net_vgss=all_net_vgss,
+                save_path=save_path,
+            )
+            print(f"Exported 3D interactive visualization to {out}")
+
     # Assemble the matrix only when every master-net row was requested.
     matrix_result = None
     if run_all_nets:
         nets = [net_vgss.net.name for net_vgss in all_net_vgss]
         matrix_result = assemble_capacitance_matrix(capacitance_rows, nets)
-        print_capacitance_matrix(matrix_result)
+        print_capacitance_matrix(matrix_result, unit=args.unit)
+
+    if args.csv is not None:
+        if matrix_result is not None:
+            csv_path = Path(args.csv) if args.csv != "" else args.output.with_suffix(".csv")
+            export_capacitance_csv(matrix_result, csv_path, unit=args.unit)
+            print(f"Exported capacitance matrix CSV to {csv_path}")
+        else:
+            print("Notice: CSV matrix export is only available when running all nets.")
+
+    if args.spice is not None:
+        if matrix_result is not None:
+            spice_path = Path(args.spice) if args.spice != "" else args.output.with_suffix(".subckt")
+            export_spice_subcircuit(matrix_result, spice_path, subckt_name="interconnect", unit=args.unit)
+            print(f"Exported SPICE subcircuit model to {spice_path}")
+        else:
+            print("Notice: SPICE subcircuit export requires running all nets to form a complete matrix.")
 
     if run_all_nets:
         export_payload = {
@@ -604,7 +769,7 @@ def main(argv=None) -> None:
         )
     else:
         print(f"Success! Saved {results[0]['num_walks']} walks.")
-    print(f"Total execution time: {time.time() - start_timr:.2f} seconds.")
+    print(f"Total execution time: {time.time() - start_time:.2f} seconds.")
 
 
 if __name__ == "__main__":

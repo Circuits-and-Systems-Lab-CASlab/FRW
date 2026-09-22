@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import numpy as np
 
@@ -451,15 +452,155 @@ def print_capacitance_row(row_result: Mapping) -> None:
         print("  WARNING: this row contains unresolved max-hop walks.")
 
 
-def print_capacitance_matrix(matrix_result: Mapping) -> None:
+UNIT_SCALES = {
+    "f": (1.0, "F"),
+    "pf": (1.0e12, "pF"),
+    "ff": (1.0e15, "fF"),
+}
+
+
+def get_unit_scale(unit: str = "pF", max_abs_val: float = 1.0) -> tuple[float, str]:
+    """Return multiplier scale factor and display symbol for capacitance units."""
+    cleaned = unit.strip().lower()
+    if cleaned == "auto":
+        if max_abs_val < 1.0e-12:
+            return 1.0e15, "fF"
+        if max_abs_val < 1.0e-6:
+            return 1.0e12, "pF"
+        return 1.0, "F"
+    if cleaned in UNIT_SCALES:
+        return UNIT_SCALES[cleaned]
+    raise ValueError(f"Unknown unit {unit!r}. Choose from: 'pF', 'fF', 'F', 'auto'.")
+
+
+def format_capacitance_matrix(matrix_result: Mapping, unit: str = "pF") -> str:
+    """Format capacitance matrix as a clean, aligned, human-readable table."""
     matrix = np.asarray(matrix_result["matrix_F"], dtype=float)
-    net_order = matrix_result["net_order"]
+    net_order = list(matrix_result["net_order"])
+    max_val = float(np.max(np.abs(matrix))) if matrix.size > 0 else 1.0
+    scale, unit_str = get_unit_scale(unit, max_val)
 
-    print("\nCapacitance matrix (F):")
-    print("Net order: " + ", ".join(net_order))
-    print(np.array2string(matrix, precision=4, suppress_small=False))
+    scaled_matrix = matrix * scale
 
-    print(
-        "Relative symmetry error: "
-        f"{matrix_result['relative_asymmetry']:.3e}"
+    name_width = max(len(name) for name in net_order)
+    col_width = max(name_width + 2, 12)
+    row_header_width = max(name_width + 2, 10)
+
+    lines = []
+    total_table_width = row_header_width + col_width * len(net_order)
+    divider = "=" * max(total_table_width, 60)
+
+    lines.append("")
+    lines.append(divider)
+    title = f"Capacitance Matrix ({unit_str})"
+    lines.append(title.center(len(divider)))
+    lines.append(divider)
+
+    header_row = " " * row_header_width + "".join(
+        f"{net:>{col_width}}" for net in net_order
     )
+    lines.append(header_row)
+
+    for i, net_name in enumerate(net_order):
+        row_str = f"{net_name:<{row_header_width}}"
+        for j in range(len(net_order)):
+            val = scaled_matrix[i, j]
+            if abs(val) >= 1.0e4 or (0.0 < abs(val) < 1.0e-3):
+                cell = f"{val:>{col_width}.4e}"
+            else:
+                cell = f"{val:>{col_width}.4f}"
+            row_str += cell
+        lines.append(row_str)
+
+    lines.append(divider)
+
+    rel_asym = matrix_result.get("relative_asymmetry")
+    if rel_asym is not None:
+        max_asym_F = matrix_result.get("max_abs_asymmetry_F", 0.0)
+        lines.append(
+            f"Relative Symmetry Error: {rel_asym * 100.0:.3f}% "
+            f"(max abs diff: {max_asym_F * scale:.4f} {unit_str})"
+        )
+
+    all_conv = matrix_result.get("all_rows_converged")
+    if all_conv is not None:
+        status_str = "All rows converged" if all_conv else "Some rows reached max walks or safety stop"
+        lines.append(f"Convergence Status:     {status_str}")
+
+    return "\n".join(lines)
+
+
+def print_capacitance_matrix(matrix_result: Mapping, unit: str = "pF") -> None:
+    """Print the formatted capacitance matrix table."""
+    print(format_capacitance_matrix(matrix_result, unit=unit))
+
+
+def export_capacitance_csv(
+    matrix_result: Mapping,
+    path: Path | str,
+    unit: str = "pF",
+) -> None:
+    """Export the capacitance matrix to a labeled CSV file."""
+    matrix = np.asarray(matrix_result["matrix_F"], dtype=float)
+    net_order = list(matrix_result["net_order"])
+    max_val = float(np.max(np.abs(matrix))) if matrix.size > 0 else 1.0
+    scale, unit_str = get_unit_scale(unit, max_val)
+    scaled_matrix = matrix * scale
+
+    target_path = Path(path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with target_path.open("w", encoding="utf-8") as f:
+        f.write("Net," + ",".join(net_order) + "\n")
+        for i, net_name in enumerate(net_order):
+            row_values = [f"{scaled_matrix[i, j]:.6e}" for j in range(len(net_order))]
+            f.write(net_name + "," + ",".join(row_values) + "\n")
+
+
+def export_spice_subcircuit(
+    matrix_result: Mapping,
+    path: Path | str,
+    subckt_name: str = "interconnect",
+    unit: str = "pF",
+) -> None:
+    """Export a lumped capacitor SPICE subcircuit model from the matrix."""
+    matrix = np.asarray(matrix_result["matrix_F"], dtype=float)
+    net_order = list(matrix_result["net_order"])
+    n = len(net_order)
+
+    c_sym = 0.5 * (matrix + matrix.T)
+    max_val = float(np.max(np.abs(c_sym))) if c_sym.size > 0 else 1.0
+    scale, unit_str = get_unit_scale(unit, max_val)
+
+    spice_unit_suffix = {
+        "fF": "f",
+        "pF": "p",
+        "F": "",
+    }.get(unit_str, "p")
+
+    target_path = Path(path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with target_path.open("w", encoding="utf-8") as f:
+        f.write("* SPICE lumped capacitance subcircuit\n")
+        f.write("* Extracted by Floating Random Walk (FRW)\n")
+        f.write(f"* Units: {unit_str}\n")
+        f.write(f".subckt {subckt_name} " + " ".join(net_order) + "\n\n")
+
+        f.write("* Mutual / coupling capacitors between nets\n")
+        for i in range(n):
+            for j in range(i + 1, n):
+                net_i = net_order[i]
+                net_j = net_order[j]
+                c_mutual = -c_sym[i, j] * scale
+                if c_mutual > 0.0:
+                    f.write(f"C_{net_i}_{net_j} {net_i} {net_j} {c_mutual:.6g}{spice_unit_suffix}\n")
+
+        f.write("\n* Ground capacitances (self - sum of mutuals)\n")
+        for i in range(n):
+            net_i = net_order[i]
+            c_gnd = float(np.sum(c_sym[i, :])) * scale
+            if c_gnd > 0.0:
+                f.write(f"C_{net_i}_GND {net_i} 0 {c_gnd:.6g}{spice_unit_suffix}\n")
+
+        f.write(f"\n.ends {subckt_name}\n")

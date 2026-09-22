@@ -240,3 +240,55 @@ def test_assemble_capacitance_matrix_preserves_independent_rows() -> None:
     row_2["convergence"] = {"enabled": True, "converged": False}
     adaptive_result = assemble_capacitance_matrix([row_1, row_2])
     assert adaptive_result["all_rows_converged"] is False
+
+
+def test_unit_scales_and_formatting(tmp_path) -> None:
+    from FRW.capacitance import (
+        export_capacitance_csv,
+        export_spice_subcircuit,
+        format_capacitance_matrix,
+        get_unit_scale,
+    )
+
+    scale, unit_str = get_unit_scale("pF")
+    assert scale == 1.0e12
+    assert unit_str == "pF"
+
+    scale_f, unit_f = get_unit_scale("fF")
+    assert scale_f == 1.0e15
+    assert unit_f == "fF"
+
+    scale_auto, unit_auto = get_unit_scale("auto", max_abs_val=1e-13)
+    assert unit_auto == "fF"
+
+    matrix_res = {
+        "matrix_F": [[2e-12, -1e-12], [-1e-12, 3e-12]],
+        "net_order": ["Net1", "Net2"],
+        "relative_asymmetry": 0.0,
+        "max_abs_asymmetry_F": 0.0,
+        "all_rows_converged": True,
+    }
+
+    table_str = format_capacitance_matrix(matrix_res, unit="pF")
+    assert "Capacitance Matrix (pF)" in table_str
+    assert "Net1" in table_str
+    assert "Net2" in table_str
+    assert "2.0000" in table_str
+
+    csv_file = tmp_path / "matrix.csv"
+    export_capacitance_csv(matrix_res, csv_file, unit="pF")
+    assert csv_file.exists()
+    content = csv_file.read_text()
+    assert "Net,Net1,Net2" in content
+    assert "Net1,2.000000e+00,-1.000000e+00" in content
+
+    subckt_file = tmp_path / "model.subckt"
+    export_spice_subcircuit(matrix_res, subckt_file, subckt_name="my_model", unit="pF")
+    assert subckt_file.exists()
+    spice_content = subckt_file.read_text()
+    assert ".subckt my_model Net1 Net2" in spice_content
+    assert "C_Net1_Net2 Net1 Net2 1p" in spice_content
+    assert "C_Net1_GND Net1 0 1p" in spice_content
+    assert "C_Net2_GND Net2 0 2p" in spice_content
+    assert ".ends my_model" in spice_content
+
