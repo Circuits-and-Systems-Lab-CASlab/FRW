@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -381,6 +382,7 @@ def _print_row_progress(completed: int, total: int, row_result: dict) -> None:
 def main(argv=None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    start_timr = time.time()
 
     if args.seed < 0:
         parser.error("--seed must be non-negative")
@@ -404,9 +406,7 @@ def main(argv=None) -> None:
         except ValueError as exc:
             parser.error(str(exc))
         if len(neumann_axes) == 3 and args.wall_potential != 0.0:
-            parser.error(
-                "--wall-potential has no effect when every axis is Neumann"
-            )
+            parser.error("--wall-potential has no effect when every axis is Neumann" )
 
     if args.walks is not None:
         if args.walks <= 0 or args.walks % 2 != 0:
@@ -604,6 +604,7 @@ def main(argv=None) -> None:
         )
     else:
         print(f"Success! Saved {results[0]['num_walks']} walks.")
+    print(f"Total execution time: {time.time() - start_timr:.2f} seconds.")
 
 
 if __name__ == "__main__":
