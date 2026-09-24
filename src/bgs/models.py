@@ -1,138 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 
-DIRECTIONS = ("PX", "PY", "PZ", "NX", "NY", "NZ")
+# Bounds/Conductor are shared geometry primitives.  Re-exporting them here keeps
+# the existing public API stable while new code can import them from ``geometry``.
+from geometry.models import Bounds, Conductor, DIRECTIONS
 
 
-@dataclass 
-class Bounds:
-    """Axis-aligned bounds for a cuboid."""
-
-    xmin: float
-    xmax: float
-    ymin: float
-    ymax: float
-    zmin: float
-    zmax: float
-
-    def __post_init__(self) -> None:
-        if not self.xmin < self.xmax:
-            raise ValueError("Expected xmin < xmax.")
-        if not self.ymin < self.ymax:
-            raise ValueError("Expected ymin < ymax.")
-        if not self.zmin < self.zmax:
-            raise ValueError("Expected zmin < zmax.")
-
-    @classmethod
-    def from_vertices(cls, vertices: np.ndarray) -> "Bounds":
-        points = np.asarray(vertices, dtype=float).reshape(-1, 3)
-        return cls(
-            xmin=float(points[:, 0].min()),
-            xmax=float(points[:, 0].max()),
-            ymin=float(points[:, 1].min()),
-            ymax=float(points[:, 1].max()),
-            zmin=float(points[:, 2].min()),
-            zmax=float(points[:, 2].max()),
-        )
-
-    def expanded(self, extents: dict[str, float]) -> "Bounds":
-        return Bounds(
-            xmin=self.xmin - extents["NX"],
-            xmax=self.xmax + extents["PX"],
-            ymin=self.ymin - extents["NY"],
-            ymax=self.ymax + extents["PY"],
-            zmin=self.zmin - extents["NZ"],
-            zmax=self.zmax + extents["PZ"],
-        )
-
-    def vertices(self) -> np.ndarray:
-        return np.array(
-            [
-                [self.xmin, self.ymin, self.zmin],
-                [self.xmax, self.ymin, self.zmin],
-                [self.xmax, self.ymax, self.zmin],
-                [self.xmin, self.ymax, self.zmin],
-                [self.xmin, self.ymin, self.zmax],
-                [self.xmax, self.ymin, self.zmax],
-                [self.xmax, self.ymax, self.zmax],
-                [self.xmin, self.ymax, self.zmax],
-            ],
-            dtype=float,
-        )
-
-
-@dataclass 
-class Conductor:
-    """A conductor block parsed from the input geometry."""
-
-    name: str
-    bounds: Bounds
-    face_vertices: np.ndarray
-    relative_permittivity: float | None = None
-    
-    # Compatibility properties used by the original FRW implementation.
-    @property
-    def min_bounds(self) -> np.ndarray:
-        return np.array(
-            [self.bounds.xmin, self.bounds.ymin, self.bounds.zmin],
-            dtype=float,
-        )
-
-    @property
-    def max_bounds(self) -> np.ndarray:
-        return np.array(
-            [self.bounds.xmax, self.bounds.ymax, self.bounds.zmax],
-            dtype=float,
-        )
-
-    def distance_to_point(self, point: np.ndarray) -> float:
-        """Return the Chebyshev distance from a point to this conductor."""
-
-        x, y, z = point
-        bounds = self.bounds
-
-        dx = max(bounds.xmin - x, 0.0, x - bounds.xmax)
-        dy = max(bounds.ymin - y, 0.0, y - bounds.ymax)
-        dz = max(bounds.zmin - z, 0.0, z - bounds.zmax)
-
-        return float(max(dx, dy, dz))
-
-    def get_surface_normal(self, point: np.ndarray) -> np.ndarray:
-        """Return the outward-facing normal of the nearest face to a point."""
-
-        point = np.asarray(point, dtype=float)
-        distances = [
-            abs(point[0] - self.bounds.xmin),
-            abs(point[0] - self.bounds.xmax),
-            abs(point[1] - self.bounds.ymin),
-            abs(point[1] - self.bounds.ymax),
-            abs(point[2] - self.bounds.zmin),
-            abs(point[2] - self.bounds.zmax),
-        ]
-        nearest_face_index = int(np.argmin(distances))
-        direction = DIRECTIONS[nearest_face_index]
-
-        if direction == "PX":
-            return np.array([1.0, 0.0, 0.0], dtype=float)
-        elif direction == "NX":
-            return np.array([-1.0, 0.0, 0.0], dtype=float)
-        elif direction == "PY":
-            return np.array([0.0, 1.0, 0.0], dtype=float)
-        elif direction == "NY":
-            return np.array([0.0, -1.0, 0.0], dtype=float)
-        elif direction == "PZ":
-            return np.array([0.0, 0.0, 1.0], dtype=float)
-        elif direction == "NZ":
-            return np.array([0.0, 0.0, -1.0], dtype=float)
-        else:
-            raise ValueError(f"Unexpected face direction: {direction}")
-
-
-@dataclass 
+@dataclass
 class SurfaceFace:
     """One rectangular face of a generated cuboid BGS."""
 
@@ -142,7 +19,7 @@ class SurfaceFace:
     area: float
 
 
-@dataclass 
+@dataclass
 class GaussianSurface:
     """Cuboid Boundary Gaussian Surface enclosing one master conductor."""
 
@@ -218,3 +95,13 @@ def make_surface_faces(bounds: Bounds) -> tuple[SurfaceFace, ...]:
         )
         for direction in DIRECTIONS
     )
+
+
+__all__ = [
+    "Bounds",
+    "Conductor",
+    "DIRECTIONS",
+    "SurfaceFace",
+    "GaussianSurface",
+    "make_surface_faces",
+]

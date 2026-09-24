@@ -71,7 +71,7 @@ def test_cli_defaults_to_adaptive_convergence() -> None:
     assert args.check_every == 200
     assert args.tolerance == 0.03
     assert args.min_hits == 10
-    assert args.workers == 4
+    assert args.workers == 5
 
 
 def test_explicit_walk_count_selects_fixed_mode() -> None:

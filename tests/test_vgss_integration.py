@@ -2,12 +2,23 @@ from pathlib import Path
 
 import numpy as np
 
-from bgs.matlab_parser import parse_matlab_geometry
 from bgs.sampling import sample_on_vgss
+from geometry import Bounds, Conductor
 from bgs.topology import find_touching_nets
 from bgs.vgss import build_all_net_vgss, build_vgss_for_conductor
 from bgs.vgss_geometry import classify_candidate, faces_containing_point
 from bgs.visualization import plot_vgss_results
+
+
+def _touching_conductors() -> list[Conductor]:
+    faces = np.zeros((6, 4, 3), dtype=float)
+    return [
+        Conductor("C1", Bounds(0, 1, 0, 1, 0, 1), faces),
+        Conductor("C2", Bounds(1, 2, 0, 1, 0, 1), faces),
+        Conductor("C3", Bounds(2, 3, 0, 1, 0, 1), faces),
+        Conductor("C4", Bounds(6, 7, 0, 1, 0, 1), faces),
+        Conductor("C5", Bounds(10, 11, 0, 1, 0, 1), faces),
+    ]
 
 
 def _assert_point_is_valid_for_net(net_vgss, point: np.ndarray) -> None:
@@ -33,8 +44,7 @@ def _assert_point_is_valid_for_net(net_vgss, point: np.ndarray) -> None:
 
 
 def test_touching_input_builds_one_vgss_for_c1_c2_c3() -> None:
-    path = Path(__file__).parents[1] / "input" / "INPUTFILE_TOUCHING_DIRECT.m"
-    conductors = parse_matlab_geometry(path)
+    conductors = _touching_conductors()
 
     nets = find_touching_nets(conductors)
     assert [net.conductor_names for net in nets] == [
@@ -59,8 +69,7 @@ def test_touching_input_builds_one_vgss_for_c1_c2_c3() -> None:
 
 
 def test_build_all_net_vgss_builds_and_samples_every_detected_net() -> None:
-    path = Path(__file__).parents[1] / "input" / "INPUTFILE_TOUCHING_DIRECT.m"
-    conductors = parse_matlab_geometry(path)
+    conductors = _touching_conductors()
 
     all_net_vgss = build_all_net_vgss(
         conductors,
@@ -97,8 +106,7 @@ def test_build_all_net_vgss_builds_and_samples_every_detected_net() -> None:
 
 
 def test_all_net_vgss_visualization_is_saved(tmp_path: Path) -> None:
-    path = Path(__file__).parents[1] / "input" / "INPUTFILE_TOUCHING_DIRECT.m"
-    conductors = parse_matlab_geometry(path)
+    conductors = _touching_conductors()
     all_net_vgss = build_all_net_vgss(conductors)
 
     rng = np.random.default_rng(2026)

@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from bgs.models import Bounds, Conductor
+from geometry import Bounds, Conductor
 
 
 AXES = ("x", "y", "z")

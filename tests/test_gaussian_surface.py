@@ -1,12 +1,9 @@
-from pathlib import Path
-
 import pytest
 
 from bgs.gaussian_surface import (
     UnsupportedGeometryError,
     generate_bgs,
 )
-from bgs.matlab_parser import parse_matlab_geometry
 from bgs.models import Bounds, Conductor
 import numpy as np
 
@@ -47,9 +44,11 @@ def test_only_directly_touching_blocks_are_ignored() -> None:
 
 
 def test_c1_surface_with_scale_factor_two() -> None:
-    path = Path(__file__).parents[1] / "input" / "INPUTFILE_05.m"
-    conductors = parse_matlab_geometry(path)
-    c1 = next(item for item in conductors if item.name == "C1")
+    faces = np.zeros((6, 4, 3), dtype=float)
+    c1 = Conductor("C1", Bounds(0, 1, 0, 1, 0, 1), faces)
+    c2 = Conductor("C2", Bounds(3, 4, 0, 1, 0, 1), faces)
+    c3 = Conductor("C3", Bounds(0, 1, 3, 4, 0, 1), faces)
+    conductors = [c1, c2, c3]
 
     result = generate_bgs(c1, conductors, scale_factor=2)
     assert result is not None

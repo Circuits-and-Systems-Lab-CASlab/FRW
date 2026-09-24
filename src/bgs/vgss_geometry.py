@@ -6,7 +6,8 @@ import math
 
 import numpy as np
 
-from .models import Bounds, GaussianSurface, SurfaceFace
+from geometry import Bounds
+from .models import GaussianSurface, SurfaceFace
 
 
 @dataclass(frozen=True)

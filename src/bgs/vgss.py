@@ -4,7 +4,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .gaussian_surface import BGSGenerationResult, generate_bgs
-from .models import Bounds, Conductor, GaussianSurface
+from geometry import Bounds, Conductor
+from .models import GaussianSurface
 from .sampling import (
     ImportanceFunction,
     VGSSSamplingContext,

@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 os.chdir(PROJECT_ROOT)
 
-from bgs.matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 from bgs.vgss import build_all_net_vgss
 from FRW.random_walk import run_frw_geometry
 from FRW.metrics import calculate_frw_metrics
@@ -150,7 +150,7 @@ def main():
     for input_file in input_files:
         print(f"Preparing geometry: {input_file.name}")
         try:
-            conductors = parse_matlab_geometry(input_file)
+            conductors = list(load_geometry(input_file).conductors)
         except Exception as e:
             print(f" [!] Skipping {input_file.name} due to parser error: {e}")
             continue

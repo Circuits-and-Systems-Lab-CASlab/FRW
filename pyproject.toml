@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bgs-generator"
 version = "0.1.0"
-description = "Generate cuboid boundary Gaussian surfaces for axis-aligned conductor blocks."
+description = "Geometry input, BGS/VGSS, GGFT, and FRW tools for capacitance extraction."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
