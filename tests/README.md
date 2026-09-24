@@ -13,13 +13,25 @@ The `tests/` directory contains automated checks for the individual components o
 
 ### What the Pytest Suite Covers
 
-* **`test_parser.py`**: Ensures MATLAB `.m` geometry files are correctly parsed into Python `Conductor` objects, accurately capturing bounds and relative permittivity.
+* **`test_parser.py`**: Separately validates raw MATLAB parsing, legacy `eps_r` compatibility, semantic interpretation into `GeometryModel`, dielectric-volume reconstruction, background permittivity, and `EPS_*` metadata resolution.
 * **`test_topology.py`**: Validates the detection of electrical nets, ensuring that face, edge, and corner contacts are correctly grouped, while overlapping geometries are flagged as invalid.
 * **`test_distances.py`**: Verifies the mathematical calculations of 3D directional distances between cuboids (Algorithm 4.2 definitions).
 * **`test_gaussian_surface.py`**: Tests the generation of Boundary Gaussian Surfaces (BGS), ensuring that directly touching blocks are skipped while non-touching constraints limit the BGS extents.
 * **`test_vgss_geometry.py`**: Enforces strict geometric rules, ensuring that proposed points inside other surfaces or on opposite normals are correctly rejected.
 * **`test_sampling.py` & `test_vgss_integration.py`**: Validates Algorithm 4.1 (SampleOnVGSS), ensuring points are correctly sampled, rejected based on multiplicity, and assigned to valid surface faces.
-* **`test_frw_integration.py`**: End-to-end checks to guarantee that the Random Walk correctly initializes on the VGSS and tracks its paths, hops, and terminal targets.
+* **`test_frw_integration.py`**: End-to-end checks to guarantee that the Random Walk correctly initializes on the VGSS and tracks its paths, hops, and terminal targets. The integration geometry is constructed inside the test so the suite does not depend on private/local input files.
+
+
+### Parser/Interpreter Boundary
+
+The source-format tests follow the same architecture as the application:
+
+```text
+MATLAB text -> input_formats.matlab_parser -> MatlabDocument
+            -> input_formats.matlab_interpreter -> GeometryModel
+```
+
+`input/DIELECTRIC_INPUT_3CONDUCTORS.m` is the checked-in standard dielectric example used by the parser/interpreter tests. The numerical BGS/VGSS/FRW tests remain independent of dielectric physics; this milestone only changes input handling and shared geometry ownership.
 
 ### How to Run the Pytest Suite
 

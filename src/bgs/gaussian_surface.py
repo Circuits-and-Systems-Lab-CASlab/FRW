@@ -13,7 +13,8 @@ from .distances import (
     directional_distances,
     limiting_directions,
 )
-from .models import Bounds, Conductor, DIRECTIONS, GaussianSurface, make_surface_faces
+from geometry import Bounds, Conductor, DIRECTIONS
+from .models import GaussianSurface, make_surface_faces
 
 
 class UnsupportedGeometryError(ValueError):

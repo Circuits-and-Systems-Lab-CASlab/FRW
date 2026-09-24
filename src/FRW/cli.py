@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from bgs.matlab_parser import parse_matlab_geometry
-from bgs.models import Bounds, Conductor
+from input_formats import load_geometry
+from geometry import Bounds, Conductor
 from bgs.sampling import VGSSSamplingStats
 from bgs.vgss import build_all_net_vgss
 from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
@@ -195,7 +195,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum number of master-net rows to run in parallel. "
             "The actual count is limited by the number of selected rows. "
-            "Default: 4."
+            "Default: 5."
         ),
     )
     parser.add_argument(
@@ -555,7 +555,8 @@ def main(argv=None) -> None:
     print(f"Reading geometry from {filename}...\n")
 
     try:
-        system_conductors = parse_matlab_geometry(filename)
+        geometry = load_geometry(filename)
+        system_conductors = list(geometry.conductors)
     except FileNotFoundError:
         print(f"ERROR: Could not find {filename!s}")
         raise SystemExit(1)

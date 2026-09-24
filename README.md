@@ -1,14 +1,17 @@
-# Boundary Gaussian Surfaces, VGSS Sampling, and FRW Integration
+# Capacitance Geometry, BGS/VGSS Sampling, GGFT, and FRW Integration
 
 This project provides an implementation of:
 
+- format-independent axis-aligned conductor/dielectric geometry models;
+- a parser/interpreter pipeline for MATLAB-style geometry input;
 - conductor-level Boundary Gaussian Surface generation based on Algorithm 4.2;
 - touch-connected electrical-net detection;
 - net-level Virtual Gaussian Surface Set construction;
 - `SampleOnVGSS` based on Algorithm 4.1;
-- integration with the original geometric Floating Random Walk implementation.
+- GGFT reference-cube transition tables;
+- integration with the existing geometric Floating Random Walk implementation.
 
-The original conductor-level BGS functions and the original maximal-cube FRW helpers remain available. The VGSS functionality is also exposed as a Python API, so the project can be used either from the command line or from another Python program.
+The parser reorganization is intentionally separate from the numerical algorithms. BGS, VGSS, GGFT, and FRW physics are unchanged in this milestone. Dielectric volumes are now represented in the internal geometry model so the later multidielectric FRW work can consume them without tying the solver to one external file format.
 
 ## Current scope
 
@@ -36,7 +39,7 @@ p(r) = 1
 U = 1
 ```
 
-The current implementation does not model dielectric transitions or general non-Manhattan geometry. A parsed `eps_r` value is stored with the conductor but is not yet used by the VGSS sampler or FRW logic.
+The input layer now reconstructs dielectric volumes and background permittivity, but the current FRW transition logic remains the original homogeneous-medium implementation. No dielectric-transition physics is enabled by this parser milestone. General non-Manhattan geometry is also outside the current scope.
 
 ## Important touching-conductor rule
 
@@ -74,7 +77,33 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+## Project structure
+
+The source tree separates external formats from physical geometry and numerical algorithms:
+
+```text
+src/
+├── geometry/        # format-independent Bounds, Conductor, DielectricRegion, GeometryModel
+├── input_formats/   # source-format parsers and semantic interpreters
+├── bgs/             # BGS, topology, VGSS construction/sampling
+├── FRW/             # existing floating-random-walk implementation
+└── GGFT/            # reference-cube GFT/WVT generation and loading
+```
+
+The dependency direction is intentionally one-way: an input adapter creates a `GeometryModel`; BGS/FRW consume that model's conductor geometry; later multidielectric FRW code can consume its dielectric volumes. The solver does not parse MATLAB syntax directly.
+
+`bgs.matlab_parser.parse_matlab_geometry()` remains as a compatibility wrapper returning only conductors, but new code should use `input_formats.load_geometry()`.
+
 ## Input geometry format
+
+The MATLAB adapter has two explicit stages:
+
+1. `input_formats.matlab_parser` parses a deliberately small, non-executable MATLAB subset: numeric scalar assignments and matrix assignments containing numeric values or scalar variable references.
+2. `input_formats.matlab_interpreter` assigns physical meaning and constructs the shared `GeometryModel`.
+
+The parser does **not** execute arbitrary MATLAB expressions. Aggregate/helper statements such as `repmat(...)` and `save(...)` are not required by the geometry interpreter.
+
+### Legacy conductor-only form
 
 Each conductor is represented by a MATLAB-style matrix with six rows. Each row contains four 3D face vertices, so every row contains twelve numbers.
 
@@ -89,9 +118,21 @@ C1 = [
 ];
 ```
 
-MATLAB `%` comments are allowed. An `eps_r = value` declaration before a conductor matrix is also parsed and stored.
+MATLAB `%` comments are allowed. A legacy `eps_r = value` declaration before a conductor matrix is retained as compatibility metadata; it is not treated as a conductor material property and is not used by the current physics.
 
-The geometry is expected to describe valid axis-aligned cuboids with unique conductor names.
+### Standard conductor + dielectric form
+
+The included `input/DIELECTRIC_INPUT_3CONDUCTORS.m` demonstrates the new standard adapter shape. The interpreter currently recognizes:
+
+- `C<number>` as a conductor cuboid with six stored faces;
+- `D<number>` as a dielectric cuboid reconstructed from its owned/stored faces, which may be fewer than six;
+- `eps_d<number>` as that dielectric region's relative permittivity;
+- `eps_air` as the background relative permittivity;
+- `EPS_C*` / `EPS_D*` as resolved per-stored-face `(eps_in, eps_out)` metadata used for input consistency and retained for later interface work.
+
+The external ownership convention can omit shared dielectric faces. The interpreter reconstructs the full dielectric **volume** from the vertices that remain. BGS and FRW currently consume only `GeometryModel.conductors`; dielectric volumes are parsed and stored but do not yet change the walk.
+
+The geometry is expected to describe valid axis-aligned cuboids with unique `C*`/`D*` object names.
 
 # Python API
 
@@ -111,7 +152,7 @@ from bgs import (
     sample_on_vgss,
 )
 
-from bgs.matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 ```
 
 The original FRW functions remain in `FRW.random_walk`:
@@ -125,20 +166,26 @@ from FRW.random_walk import (
 )
 ```
 
-## Parse a geometry file
+## Parse and interpret a geometry file
 
 ```python
-from bgs.matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 
-conductors = parse_matlab_geometry(
-    "input/INPUTFILE_TOUCHING_DIRECT.m"
-)
+geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
+conductors = list(geometry.conductors)
 
-for conductor in conductors:
+for conductor in geometry.conductors:
     print(conductor.name, conductor.min_bounds, conductor.max_bounds)
+
+for dielectric in geometry.dielectrics:
+    print(dielectric.name, dielectric.bounds, dielectric.relative_permittivity)
+
+print("background eps_r =", geometry.background_permittivity)
 ```
 
-`parse_matlab_geometry()` returns a list of `Conductor` objects.
+`load_geometry()` returns a format-independent `GeometryModel`. This is the preferred API for new code and is the extension point for future input formats.
+
+For older code, `bgs.matlab_parser.parse_matlab_geometry(path)` is preserved and returns `list[Conductor]`.
 
 ## Original conductor-level BGS API
 
@@ -146,9 +193,10 @@ for conductor in conductors:
 
 ```python
 from bgs import generate_bgs
-from bgs.matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 
-conductors = parse_matlab_geometry("input/INPUTFILE_05.m")
+geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
+conductors = list(geometry.conductors)
 master = next(c for c in conductors if c.name == "C1")
 
 result = generate_bgs(
@@ -207,13 +255,7 @@ for net in nets:
     print(net.name, net.conductor_names)
 ```
 
-For `INPUTFILE_TOUCHING_DIRECT.m`, the expected nets are:
-
-```text
-Net1: C1, C2, C3
-Net2: C4
-Net3: C5
-```
+For example, a touching chain `C1-C2-C3` is detected as one transitive electrical net even when `C1` and `C3` do not directly touch.
 
 ## Build the VGSS for a selected conductor's net
 
@@ -428,11 +470,10 @@ import numpy as np
 
 from FRW.random_walk import run_frw_geometry
 from bgs import build_vgss_for_conductor
-from bgs.matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 
-conductors = parse_matlab_geometry(
-    "input/INPUTFILE_TOUCHING_DIRECT.m"
-)
+geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
+conductors = list(geometry.conductors)
 
 master_vgss = build_vgss_for_conductor(
     conductors,
@@ -543,7 +584,7 @@ The module commands below work directly with the current source tree after insta
 ## Generate one conductor-level BGS
 
 ```bash
-python -m bgs.main input/INPUTFILE_05.m \
+python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --master C1 \
     --scale-factor 2
 ```
@@ -551,7 +592,7 @@ python -m bgs.main input/INPUTFILE_05.m \
 Save the plot without opening a window:
 
 ```bash
-python -m bgs.main input/INPUTFILE_05.m \
+python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --master C1 \
     --scale-factor 2 \
     --save-plot output/C1_bgs.png \
@@ -561,7 +602,7 @@ python -m bgs.main input/INPUTFILE_05.m \
 ## Generate BGSs for every conductor
 
 ```bash
-python -m bgs.main input/INPUTFILE_05.m \
+python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --all \
     --scale-factor 2 \
     --save-plot output/all_bgs.png \
@@ -575,7 +616,7 @@ When `--save-plot` is omitted in `--all` mode, the combined plot is saved as `ou
 `--net-master` identifies a conductor belonging to the desired net.
 
 ```bash
-python -m bgs.vgss_cli input/INPUTFILE_TOUCHING_DIRECT.m \
+python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --net-master C1 \
     --count 10 \
     --seed 1234 \
@@ -585,7 +626,7 @@ python -m bgs.vgss_cli input/INPUTFILE_TOUCHING_DIRECT.m \
 Save coordinates and a visualization:
 
 ```bash
-python -m bgs.vgss_cli input/INPUTFILE_TOUCHING_DIRECT.m \
+python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --net-master C1 \
     --count 1000 \
     --seed 1234 \
@@ -603,7 +644,7 @@ x,y,z
 ## Sample every detected net
 
 ```bash
-python -m bgs.vgss_cli input/INPUTFILE_TOUCHING_DIRECT.m \
+python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --all-nets \
     --count 1000 \
     --seed 1234 \
@@ -623,7 +664,7 @@ The installed `vgss-sample` console command is equivalent to `python -m bgs.vgss
 ## Run the integrated FRW
 
 ```bash
-python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
+python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --scale-factor 1.25 \
     --max-distance 10 \
     --seed 1234 \
@@ -633,14 +674,14 @@ python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
 
 Adaptive convergence is the CLI default. Each master row stops independently
 when its row-max three-standard-error ratio is at most `0.03`, after at least
-2,000 walks and 10 hits per target entry. The default hard limit is 100,000
+2,000 walks and 10 hits per target entry. The default hard limit is 1,000,000
 walks, with checks every 200 walks. All counts are even so checks occur only
 after complete inward/outward pairs.
 
 Use the adaptive options to change those limits:
 
 ```bash
-python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
+python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
     --tolerance 0.02 \
     --min-walks 4000 \
     --max-walks 200000 \
@@ -651,12 +692,12 @@ python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m \
 Supplying `--walks` selects fixed mode and disables convergence:
 
 ```bash
-python -m FRW.cli input/INPUTFILE_TOUCHING_DIRECT.m --walks 5000
+python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m --walks 5000
 ```
 
 If `--master` is omitted, the CLI runs every detected net and assembles the
 full capacitance matrix. Rows are independent and run in separate worker
-processes. The default is at most four workers; the actual number is limited to
+processes. The default is at most five workers; the actual number is limited to
 the number of selected rows. For example, two rows use two workers, while
 `--master Net1` runs sequentially without creating a process pool. Use
 `--workers 1` to force sequential execution.
@@ -753,7 +794,9 @@ The current suite covers:
 
 - directional distances;
 - BGS generation;
-- parser behavior;
+- raw MATLAB parser and semantic interpreter behavior;
+- legacy parser compatibility;
+- standard conductor/dielectric volume reconstruction;
 - direct-touch skipping;
 - overlap rejection;
 - transitive net construction;
@@ -768,8 +811,7 @@ The current suite covers:
 
 - Conductors must be axis-aligned cuboids.
 - Overlapping conductor volumes are invalid input.
-- Dielectric transitions are not implemented.
-- Parsed relative permittivity is not yet used by the sampler.
+- Dielectric volumes/background permittivity are represented internally, but dielectric transition physics is not implemented yet.
+- `EPS_*` boundary-permittivity metadata is parsed and retained but is not yet consumed by FRW.
 - The caller must currently provide a valid positive `U` and a function satisfying `0 <= p(r) <= U`.
-- The FRW command-line interface processes only the first detected net.
 - The implementation prioritizes correctness and clarity over large-scale performance optimization.

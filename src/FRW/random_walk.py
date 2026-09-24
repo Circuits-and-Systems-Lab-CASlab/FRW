@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 
-from bgs.models import Bounds
+from geometry import Bounds
 from bgs.sampling import VGSSSamplingStats, sample_on_vgss
 from GGFT.ggft import (
     FIRST_TRANSITION_MODES,

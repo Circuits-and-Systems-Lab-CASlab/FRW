@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .matlab_parser import parse_matlab_geometry
+from input_formats import load_geometry
 from .sampling import sample_on_vgss
 from .topology import find_touching_nets
 from .vgss import build_all_net_vgss, build_vgss_for_conductor
@@ -125,7 +125,8 @@ def main() -> None:
     if args.count <= 0:
         raise SystemExit("--count must be positive.")
 
-    conductors = parse_matlab_geometry(args.input_file)
+    geometry = load_geometry(args.input_file)
+    conductors = list(geometry.conductors)
     nets = find_touching_nets(conductors, abs_tol=args.abs_tol)
 
     print("Detected nets:")

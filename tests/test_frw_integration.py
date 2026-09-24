@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -13,7 +11,6 @@ from FRW.random_walk import (
     run_one_walk,
 )
 from GGFT.ggft import STRATIFIED_FIRST_TRANSITION, CubeGFT
-from bgs.matlab_parser import parse_matlab_geometry
 from bgs.models import Bounds, Conductor, GaussianSurface, make_surface_faces
 from bgs.sampling import VGSSSamplingStats, prepare_vgss_sampling, sample_on_vgss
 from bgs.vgss import build_vgss_for_conductor
@@ -21,6 +18,14 @@ from bgs.vgss import build_vgss_for_conductor
 
 def _surface(name: str, bounds: Bounds) -> GaussianSurface:
     return GaussianSurface(name, bounds, make_surface_faces(bounds))
+
+
+def _integration_conductors() -> list[Conductor]:
+    faces = np.zeros((6, 4, 3), dtype=float)
+    return [
+        Conductor("C1", Bounds(0, 1, 0, 1, 0, 1), faces),
+        Conductor("C2", Bounds(3, 4, 0, 1, 0, 1), faces),
+    ]
 
 
 def test_nearest_conductor_returns_index_and_distance() -> None:
@@ -69,8 +74,7 @@ def test_sampling_stats_estimate_weighted_H() -> None:
 
 
 def test_one_walk_can_skip_the_full_visualization_trace() -> None:
-    project_root = Path(__file__).resolve().parents[1]
-    conductors = parse_matlab_geometry(project_root / "input" / "INPUT_EXAMPLE.m")
+    conductors = _integration_conductors()
     master_vgss = build_vgss_for_conductor(conductors, "C1")
     system_center, system_size = get_system_bounds(conductors)
 
@@ -92,8 +96,7 @@ def test_one_walk_can_skip_the_full_visualization_trace() -> None:
 
 
 def test_online_accumulation_matches_the_stored_batch() -> None:
-    project_root = Path(__file__).resolve().parents[1]
-    conductors = parse_matlab_geometry(project_root / "input" / "INPUT_EXAMPLE.m")
+    conductors = _integration_conductors()
     master_vgss = build_vgss_for_conductor(conductors, "C1")
 
     batch = run_frw_geometry(

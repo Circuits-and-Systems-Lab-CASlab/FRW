@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .distances import boxes_overlap, boxes_touch
-from .models import Conductor
+from geometry import Conductor
 
 
 class InvalidConductorGeometryError(ValueError):

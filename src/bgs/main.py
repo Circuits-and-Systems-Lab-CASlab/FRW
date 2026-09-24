@@ -10,8 +10,8 @@ from .gaussian_surface import (
     generate_all_bgs,
     generate_bgs,
 )
-from .matlab_parser import parse_matlab_geometry
-from .models import DIRECTIONS
+from input_formats import load_geometry
+from geometry import DIRECTIONS
 from .visualization import plot_geometry
 
 
@@ -145,7 +145,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_parser().parse_args()
 
-    conductors = parse_matlab_geometry(args.input_file)
+    geometry = load_geometry(args.input_file)
+    conductors = list(geometry.conductors)
 
     print("Loaded conductors:")
     for conductor in conductors:

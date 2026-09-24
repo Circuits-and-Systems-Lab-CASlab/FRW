@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from .models import Bounds, DIRECTIONS
+from geometry import Bounds, DIRECTIONS
 
 
 def directional_distances(a: Bounds, b: Bounds) -> dict[str, float]:

@@ -6,7 +6,8 @@ from .gaussian_surface import (
     generate_all_bgs,
     generate_bgs,
 )
-from .models import Bounds, Conductor, GaussianSurface, SurfaceFace
+from geometry import Bounds, Conductor
+from .models import GaussianSurface, SurfaceFace
 from .sampling import (
     VGSSSamplingContext,
     VGSSSamplingStats,
