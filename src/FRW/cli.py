@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import json
 import sys
 import time
@@ -24,11 +25,6 @@ from .boundary import validate_window
 from .metrics import MetricsAccumulator
 from .convergence import check_row_convergence
 from .random_walk import get_system_bounds, run_one_walk
-from .visualization import (
-    extract_walk_trace,
-    visualize_3d_walk,
-    visualize_3d_walk_html,
-)
 
 WARNING_WALKS_THRESHOLD = 0.8  # 80% of max walks
 
@@ -502,6 +498,11 @@ def main(argv=None) -> None:
         parser.error("--max-hops must be positive")
     if not np.isfinite(args.wall_potential):
         parser.error("--wall-potential must be finite")
+    if args.visualization and importlib.util.find_spec("matplotlib") is None:
+        parser.error(
+            "--visualization requires matplotlib "
+            "(pip install -e \".[plot]\"); --html works without it"
+        )
 
     neumann_axes = tuple(dict.fromkeys(args.neumann_axes))
     if args.window is None:
@@ -679,6 +680,8 @@ def main(argv=None) -> None:
     capacitance_rows = [ item["capacitance_row"] for item in ordered_row_results ]
 
     if args.visualization:
+        from .visualization import extract_walk_trace, visualize_3d_walk
+
         vgss_by_name = {
             net_vgss.net.name: net_vgss for net_vgss in all_net_vgss
         }
@@ -699,6 +702,8 @@ def main(argv=None) -> None:
             )
 
     if args.html is not None:
+        from .visualization import extract_walk_trace, visualize_3d_walk_html
+
         vgss_by_name = { net_vgss.net.name: net_vgss for net_vgss in all_net_vgss }
         base_html_path = (
             Path(args.html)

@@ -21,7 +21,6 @@ from .topology import (
     find_net_containing,
     find_touching_nets,
 )
-from .visualization import plot_vgss_results
 from .vgss import (
     NetVGSS,
     build_all_net_vgss,
@@ -53,3 +52,12 @@ __all__ = [
     "build_vgss_for_conductor",
     "plot_vgss_results",
 ]
+
+
+def __getattr__(name: str):
+    # Lazy import so the package works without matplotlib installed.
+    if name == "plot_vgss_results":
+        from .visualization import plot_vgss_results
+
+        return plot_vgss_results
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

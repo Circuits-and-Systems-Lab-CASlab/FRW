@@ -12,7 +12,19 @@ from .gaussian_surface import (
 )
 from input_formats import load_geometry
 from geometry import DIRECTIONS
-from .visualization import plot_geometry
+
+
+def _plotting_enabled(args) -> bool:
+    """Decide whether to plot; plotting needs the optional matplotlib extra."""
+
+    from .visualization import MATPLOTLIB_MISSING_MESSAGE, matplotlib_available
+
+    if matplotlib_available():
+        return True
+    if args.save_plot is not None:
+        raise SystemExit(MATPLOTLIB_MISSING_MESSAGE)
+    print(f"Skipping plot: {MATPLOTLIB_MISSING_MESSAGE}")
+    return False
 
 
 def _format_value(value: float) -> str:
@@ -170,15 +182,18 @@ def main() -> None:
             _print_result(result)
 
         # Draw every generated BGS in one combined figure.
-        plot_geometry(
-            conductors,
-            selected_surfaces=[
-                result.gaussian_surface
-                for result in results
-            ],
-            save_path=args.save_plot or Path("output") / "all_bgs.png",
-            show=not args.no_show,
-        )
+        if _plotting_enabled(args):
+            from .visualization import plot_geometry
+
+            plot_geometry(
+                conductors,
+                selected_surfaces=[
+                    result.gaussian_surface
+                    for result in results
+                ],
+                save_path=args.save_plot or Path("output") / "all_bgs.png",
+                show=not args.no_show,
+            )
 
         return
 
@@ -217,12 +232,15 @@ def main() -> None:
 
     _print_result(result)
 
-    plot_geometry(
-        conductors,
-        selected_surface=result.gaussian_surface,
-        save_path=args.save_plot,
-        show=not args.no_show,
-    )
+    if _plotting_enabled(args):
+        from .visualization import plot_geometry
+
+        plot_geometry(
+            conductors,
+            selected_surface=result.gaussian_surface,
+            save_path=args.save_plot,
+            show=not args.no_show,
+        )
 
 
 if __name__ == "__main__":

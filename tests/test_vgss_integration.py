@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from bgs.sampling import sample_on_vgss
 from geometry import Bounds, Conductor
@@ -106,6 +107,7 @@ def test_build_all_net_vgss_builds_and_samples_every_detected_net() -> None:
 
 
 def test_all_net_vgss_visualization_is_saved(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
     conductors = _touching_conductors()
     all_net_vgss = build_all_net_vgss(conductors)
 
