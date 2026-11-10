@@ -4,13 +4,33 @@ from collections.abc import Sequence
 import json
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 import numpy as np
-from matplotlib.colors import to_rgba
-from matplotlib.lines import Line2D
-from matplotlib.widgets import CheckButtons
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    from matplotlib.colors import to_rgba
+    from matplotlib.lines import Line2D
+    from matplotlib.widgets import CheckButtons
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+except ImportError:  # matplotlib is optional: pip install "bgs-generator[plot]"
+    plt = None
+
+MATPLOTLIB_MISSING_MESSAGE = (
+    "matplotlib is required for plotting. Install it with "
+    "'pip install matplotlib' or 'pip install -e \".[plot]\"'."
+)
+
+
+def matplotlib_available() -> bool:
+    """Return True when matplotlib can be used for plotting."""
+
+    return plt is not None
+
+
+def _require_matplotlib() -> None:
+    if plt is None:
+        raise ImportError(MATPLOTLIB_MISSING_MESSAGE)
 
 
 # ==========================================
@@ -202,6 +222,7 @@ def visualize_2d_walk(
     show=True,
 ):
     """Plot one visual FRW walk in the XY, XZ, and YZ projections."""
+    _require_matplotlib()
     path_points = np.asarray(path_points, dtype=float)
 
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)
@@ -387,6 +408,7 @@ def visualize_3d_walk(
     """
     Plot one representative FRW path together with every generated VGSS.
     """
+    _require_matplotlib()
     path_points = np.asarray(path_points, dtype=float)
 
     net_vgss_collection = _normalize_vgss_collection(master_vgss, all_net_vgss)

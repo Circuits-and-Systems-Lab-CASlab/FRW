@@ -57,9 +57,40 @@ The implementation therefore ignores only the directly touching conductor or con
 
 ## Installation
 
-Python 3.10 or newer is required.
+Python 3.10 or newer is required. The only required runtime dependency is
+**NumPy**; everything else is optional:
 
-### Windows PowerShell
+| Extra | Packages | Needed for |
+|---|---|---|
+| *(core)* | `numpy` | BGS/VGSS construction, sampling, GGFT, FRW capacitance extraction |
+| `plot` | `matplotlib` | `--visualization`, `--save-plot`, interactive figures, `plot_vgss_results` |
+| `excel` | `openpyxl` | `scripts/run_excel_cases.py` |
+| `dev` | `pytest`, `matplotlib`, `openpyxl` | the test suite |
+
+No compiler is needed: the precomputed GGFT tables
+(`src/GGFT/data/cube_tables_n201.npz`) are part of the repository. A C++
+toolchain is only needed to regenerate them (see `src/GGFT/README.md`).
+
+matplotlib is imported lazily. Without it, the computational commands still
+work, and plotting is skipped with a message. Explicitly requesting a plot
+(`--visualization`, `--save-plot`) without matplotlib is an error. The
+`--html` export of `FRW.cli` does not need matplotlib.
+
+A virtual environment is recommended, but not required. Pick one of the
+options below.
+
+### Option A: virtual environment (recommended)
+
+Linux or macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"     # or: -e .   /  -e ".[plot]"
+```
+
+Windows PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -68,14 +99,38 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-### Linux or macOS
+The venv lives in your home or project directory, so it needs no root access.
+
+### Option B: user-space install on a server (no venv, no root)
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python3 -m pip install --user -e .            # core only (numpy)
+python3 -m pip install --user -e ".[plot]"    # with plotting
 ```
+
+This also installs the `frw`, `bgs-generate`, and `vgss-sample` commands into
+`~/.local/bin`. Make sure that directory is on your `PATH`.
+
+Newer Debian and Ubuntu systems refuse `pip install --user` with
+`externally-managed-environment` (PEP 668). On those systems, use Option A,
+your cluster's `module load python` or conda, or (not recommended) add
+`--break-system-packages`.
+
+### Option C: run from the source tree without installing
+
+If NumPy is already available, for example from a system or cluster module,
+no installation is needed:
+
+```bash
+export PYTHONPATH="$PWD/src"
+python3 -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m --walks 5000
+```
+
+### Headless servers
+
+On machines without a display, set `MPLBACKEND=Agg` if matplotlib is
+installed, and pass `--no-show` to the BGS/VGSS commands. Use `--save-plot`
+to write figures to files instead.
 
 ## Project structure
 
@@ -437,6 +492,8 @@ For `p(r) = 1`, `H` estimates the actual exterior VGSS area after the geometry a
 
 ## Visualize VGSS results
 
+Requires the optional `plot` extra (`pip install -e ".[plot]"`).
+
 ```python
 from bgs import plot_vgss_results
 
@@ -720,6 +777,8 @@ transition. To revert the CLI itself to standard sampling, change its
 standard implementation remain intact.
 
 ## Replay the three Excel comparison cases
+
+Requires the optional `excel` extra (`pip install -e ".[excel]"`).
 
 The comparison workbook records the exact windows and boundary conditions used
 for `W0.14_S0.14`, `W0.14_S0.70`, and `W0.14_S2.8`. To replay its stratified

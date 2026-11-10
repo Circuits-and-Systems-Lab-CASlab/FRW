@@ -4,16 +4,36 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from geometry import Bounds, Conductor
 from .models import GaussianSurface, make_surface_faces
 
 if TYPE_CHECKING:
     from .vgss import NetVGSS
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+except ImportError:  # matplotlib is optional: pip install "bgs-generator[plot]"
+    plt = None
+
+MATPLOTLIB_MISSING_MESSAGE = (
+    "matplotlib is required for plotting. Install it with "
+    "'pip install matplotlib' or 'pip install -e \".[plot]\"'."
+)
+
+
+def matplotlib_available() -> bool:
+    """Return True when matplotlib can be used for plotting."""
+
+    return plt is not None
+
+
+def _require_matplotlib() -> None:
+    if plt is None:
+        raise ImportError(MATPLOTLIB_MISSING_MESSAGE)
 
 
 def _add_box_faces(
@@ -78,6 +98,7 @@ def plot_geometry(
     save_path: str | Path | None = None,
     show: bool = True,
 ) -> None:
+    _require_matplotlib()
     conductor_list = list(conductors)
     if not conductor_list:
         raise ValueError("At least one conductor is required for plotting.")
@@ -167,6 +188,7 @@ def plot_vgss_results(
     `sampled_points` is keyed by `ConductorNet.name`, for example `Net1`.
     The BGSs and accepted points belonging to the same net share one color.
     """
+    _require_matplotlib()
 
     conductor_list = list(conductors)
     net_vgss_list = list(net_vgss_collection)

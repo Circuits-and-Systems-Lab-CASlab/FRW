@@ -1,4 +1,11 @@
+# Core runtime (all that is needed for FRW/BGS/VGSS computations)
 numpy>=1.24
+
+# Optional: plotting (--visualization, --save-plot, interactive figures)
 matplotlib>=3.7
+
+# Optional: scripts/run_excel_cases.py
 openpyxl>=3.1
+
+# Optional: tests
 pytest>=7.0

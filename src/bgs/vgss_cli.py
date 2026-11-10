@@ -10,7 +10,19 @@ from input_formats import load_geometry
 from .sampling import sample_on_vgss
 from .topology import find_touching_nets
 from .vgss import build_all_net_vgss, build_vgss_for_conductor
-from .visualization import plot_vgss_results
+
+
+def _plotting_enabled(args) -> bool:
+    """Decide whether to plot; plotting needs the optional matplotlib extra."""
+
+    from .visualization import MATPLOTLIB_MISSING_MESSAGE, matplotlib_available
+
+    if matplotlib_available():
+        return True
+    if args.save_plot is not None:
+        raise SystemExit(MATPLOTLIB_MISSING_MESSAGE)
+    print(f"Skipping plot: {MATPLOTLIB_MISSING_MESSAGE}")
+    return False
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -185,13 +197,16 @@ def main() -> None:
         )
         print(f"Saved points to {args.save_points}")
 
-    plot_vgss_results(
-        conductors,
-        net_vgss_collection,
-        sampled_points,
-        save_path=args.save_plot,
-        show=not args.no_show,
-    )
+    if _plotting_enabled(args):
+        from .visualization import plot_vgss_results
+
+        plot_vgss_results(
+            conductors,
+            net_vgss_collection,
+            sampled_points,
+            save_path=args.save_plot,
+            show=not args.no_show,
+        )
 
 
 if __name__ == "__main__":
