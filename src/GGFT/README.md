@@ -150,41 +150,47 @@ wvt[j]       = gradients[j] / probabilities[j]
 
 ## Runtime use for a general cube
 
-Load once:
+Load once. `load_default()` finds the bundled table regardless of the working
+directory; `CubeGFT.load(path)` loads any other `.npz` file:
 
 ```python
-from ggft import CubeTransitionTables
+import numpy as np
 
-tables = CubeTransitionTables.load("data/cube_tables_n201.npz")
+from GGFT import CubeGFT
+
+gft = CubeGFT.load_default()  # src/GGFT/data/cube_tables_n201.npz
+rng = np.random.default_rng(1234)
+center = np.array([0.0, 0.0, 0.0])  # current walk position
+a = 0.5                             # half-size of the maximal cube
 ```
 
 Sample a normal transition:
 
 ```python
-sample = tables.sample_next_point(
-    cube_center=center,
+r_prime, panel_index, transition_probability = gft.sample_next_point(
+    current_point=center,
     cube_half_size=a,
     rng=rng,
 )
-
-r_prime = sample.point
-panel_index = sample.panel_index
-transition_probability = sample.panel_probability
 ```
 
 For the first transition from the Gaussian surface:
 
 ```python
-sample = tables.sample_first_transition(
-    cube_center=r0,
+r0 = center                          # accepted VGSS point
+normal = np.array([0.0, 0.0, 1.0])   # outward normal at r0
+
+r1, panel_index, probability, omega = gft.sample_first_transition(
+    current_point=r0,
     cube_half_size=a,
     surface_normal=normal,
     rng=rng,
 )
-
-r1 = sample.point
-omega = sample.omega
 ```
+
+This is the standard first transition. `mode="stratified"` (with `stratum`
+and `allocation_probability`) samples one geometric half of the cube in
+proportion to the absolute derivative; see `sample_first_transition()` in `ggft.py`.
 
 The reference cube is `[-1, 1]^3`. For an axis-aligned physical cube with
 centre `c` and half-size `a`:
