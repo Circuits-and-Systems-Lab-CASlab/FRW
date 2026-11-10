@@ -1,64 +1,40 @@
-# Capacitance Geometry, BGS/VGSS Sampling, GGFT, and FRW Integration
+# Capacitance Extraction with the Floating Random Walk
 
-This project provides an implementation of:
+A Python implementation of capacitance extraction for axis-aligned conductor
+structures using the Floating Random Walk (FRW) method. Walks start on Virtual
+Gaussian Surfaces built around each electrical net, use precomputed GGFT
+reference-cube transition tables, and are accumulated into a capacitance
+matrix.
 
-- format-independent axis-aligned conductor/dielectric geometry models;
-- a parser/interpreter pipeline for MATLAB-style geometry input;
-- conductor-level Boundary Gaussian Surface generation based on Algorithm 4.2;
-- touch-connected electrical-net detection;
-- net-level Virtual Gaussian Surface Set construction;
-- `SampleOnVGSS` based on Algorithm 4.1;
-- GGFT reference-cube transition tables;
-- integration with the existing geometric Floating Random Walk implementation.
+## Current state
 
-The parser reorganization is intentionally separate from the numerical algorithms. BGS, VGSS, GGFT, and FRW physics are unchanged in this milestone. Dielectric volumes are now represented in the internal geometry model so the later multidielectric FRW work can consume them without tying the solver to one external file format.
+What works today:
 
-## Current scope
-
-The implementation currently supports:
-
-- MATLAB-style geometry files containing conductor matrices such as `C1 = [ ... ];`;
-- axis-aligned cuboid conductor blocks;
-- one cuboid BGS for each conductor block;
-- face, edge, and corner contact as electrical connectivity;
-- indirect net connectivity through intermediate touching blocks;
-- rejection of overlapping conductor volumes as invalid input;
-- one independent VGSS sampling context for each detected net;
-- area-weighted BGS and face selection;
-- geometric rejection of buried and internal interfaces;
-- the `1 / n_c(r)` multiplicity correction;
-- configurable importance rejection using `p(r) / U`;
-- estimation of the normalization integral `H` from sampling statistics;
-- 3D visualization of conductors, BGSs, VGSSs, and accepted sample points;
-- use of accepted VGSS points as FRW starting points;
-- open space or a finite window with per-axis Dirichlet (absorbing) or Neumann (reflecting) faces;
-- standard or derivative-stratified first transitions;
+- MATLAB-style geometry input (conductors and dielectric boxes) through a
+  parser and interpreter that produce a format-independent geometry model;
+- touch-connected electrical-net detection (face, edge and corner contact);
+- Boundary Gaussian Surfaces (Algorithm 4.2) and net-level Virtual Gaussian
+  Surface Sets with `SampleOnVGSS` (Algorithm 4.1);
+- FRW in a homogeneous medium, in open space or a finite window with
+  per-axis Dirichlet (absorbing) or Neumann (reflecting) faces;
+- standard or derivative-stratified first transitions (the CLI uses
+  stratified);
 - adaptive convergence on the row-max 3SE criterion, or a fixed walk count;
-- the full capacitance matrix, computed row by row in parallel worker processes;
-- JSON, CSV, and SPICE subcircuit export, plus an interactive 3D HTML walk view.
+- the full capacitance matrix, computed row by row in parallel worker
+  processes;
+- JSON, CSV and SPICE subcircuit export, plus 3D views of walks, BGSs and
+  VGSS samples (matplotlib or an interactive HTML file).
 
-The default importance function is:
+Not done yet:
 
-```text
-p(r) = 1
-U = 1
-```
-
-The input layer now reconstructs dielectric volumes and background permittivity, but the current FRW transition logic remains the original homogeneous-medium implementation. No dielectric-transition physics is enabled by this parser milestone. General non-Manhattan geometry is also outside the current scope.
-
-## Important touching-conductor rule
-
-Electrical nets are found as connected components. Therefore, if `C1` touches `C2` and `C2` touches `C3`, all three conductors belong to the same net even when `C1` does not directly touch `C3`.
-
-BGS generation applies a more local rule:
-
-- a conductor directly touching the current master conductor is ignored for that master's BGS calculation;
-- a same-net conductor that does not directly touch the current master is still considered;
-- conductors outside the net are also considered;
-- overlapping conductor volumes are rejected.
-
-The implementation therefore ignores only the directly touching conductor or conductors, not the complete net.
-
+- Dielectric boxes and background permittivity are parsed and stored, but the
+  walk still assumes one homogeneous medium. Multi-dielectric physics is being
+  developed on the `dielectrics` and `debug/dielectric-frw` branches.
+- `EPS_*` boundary-permittivity metadata is parsed but not used by FRW.
+- Conductors must be axis-aligned cuboids, and overlapping conductor volumes
+  are rejected as invalid input.
+- A custom VGSS importance function `p(r)` must satisfy `0 <= p(r) <= U` with
+  a valid positive `U`; this is not checked.
 
 ## Installation
 
@@ -137,35 +113,144 @@ On machines without a display, set `MPLBACKEND=Agg` if matplotlib is
 installed, and pass `--no-show` to the BGS/VGSS commands. Use `--save-plot`
 to write figures to files instead.
 
-## Project structure
+## Quick start
 
-The source tree separates external formats from physical geometry and numerical algorithms:
+Compute the capacitance matrix of the included three-conductor example with
+5,000 walks per row, and also write it as CSV:
 
-```text
-src/
-├── geometry/        # format-independent Bounds, Conductor, DielectricRegion, GeometryModel
-├── input_formats/   # source-format parsers and semantic interpreters
-├── bgs/             # BGS, topology, VGSS construction/sampling
-├── FRW/             # existing floating-random-walk implementation
-└── GGFT/            # reference-cube GFT/WVT generation and loading
+```bash
+frw input/DIELECTRIC_INPUT_3CONDUCTORS.m --walks 5000 --csv
 ```
 
-The dependency direction is intentionally one-way: an input adapter creates a `GeometryModel`; BGS/FRW consume that model's conductor geometry; later multidielectric FRW code can consume its dielectric volumes. The solver does not parse MATLAB syntax directly.
+The matrix is printed in pF and saved to `output/frw_exported_data.json` and
+`output/frw_exported_data.csv`. Without `--walks`, each row runs until it
+converges (see below).
 
-`bgs.matlab_parser.parse_matlab_geometry()` remains as a compatibility wrapper returning only conductors, but new code should use `input_formats.load_geometry()`.
+Look at the geometry and the Boundary Gaussian Surfaces first:
 
-## Input geometry format
+```bash
+bgs-generate input/DIELECTRIC_INPUT_3CONDUCTORS.m --all --save-plot output/all_bgs.png --no-show
+```
 
-The MATLAB adapter has two explicit stages:
+Every command also runs as a module from the source tree, for example
+`python -m FRW.cli`, `python -m bgs.main` and `python -m bgs.vgss_cli` (see
+[Option C](#option-c-run-from-the-source-tree-without-installing)).
 
-1. `input_formats.matlab_parser` parses a deliberately small, non-executable MATLAB subset: numeric scalar assignments and matrix assignments containing numeric values or scalar variable references.
-2. `input_formats.matlab_interpreter` assigns physical meaning and constructs the shared `GeometryModel`.
+## Command-line usage
 
-The parser does **not** execute arbitrary MATLAB expressions. Aggregate/helper statements such as `repmat(...)` and `save(...)` are not required by the geometry interpreter.
+### `frw`: capacitance extraction
 
-### Legacy conductor-only form
+```bash
+frw INPUT_FILE [options]
+```
 
-Each conductor is represented by a MATLAB-style matrix with six rows. Each row contains four 3D face vertices, so every row contains twelve numbers.
+By default every detected net is run as the master once, and the rows are
+assembled into the full capacitance matrix. Each row stops independently when
+its row-max relative three-standard-error ratio is at most `--tolerance`,
+after at least `--min-walks` walks and `--min-hits` hits per entry. Each row
+has its own RNG stream derived from `--seed`, so results do not depend on the
+number of workers.
+
+**Walk count and convergence**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--walks N` | off | Run exactly `N` walks per row (even number) and disable adaptive convergence. |
+| `--tolerance` | `0.03` | Adaptive target for the row-max relative 3SE ratio. |
+| `--min-walks` | `2000` | Minimum walks per row before convergence is checked. |
+| `--max-walks` | `1000000` | Hard limit per row. |
+| `--check-every` | `200` | Walks between convergence checks. |
+| `--min-hits` | `10` | Minimum hits required for every matrix entry. |
+| `--max-hops` | `200` | Maximum cube transitions in one walk. |
+
+**What to run**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--master NET` | all nets | Run only one row, for example `--master Net1`. No matrix is assembled. |
+| `--workers` | `5` | Rows run in parallel. Capped at the number of rows. |
+| `--seed` | `1234` | Random seed. |
+| `--scale-factor` | `1.25` | VGSS size relative to the nearest neighbour (Algorithm 4.2). Must be at least 1. |
+| `--max-distance` | `10.0` | VGSS extent for a conductor with no neighbours. |
+
+**Boundaries**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--window XMIN XMAX YMIN YMAX ZMIN ZMAX` | open space | Finite simulation window. Its faces are Dirichlet (absorbing) unless listed in `--neumann-axes`. |
+| `--neumann-axes x y z` | none | Make these window axes reflecting. |
+| `--wall-potential` | `0.0` | Potential of the Dirichlet window faces. |
+
+**Output**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--output PATH` | `output/frw_exported_data.json` | Full results as JSON. |
+| `--unit` | `pF` | `pF`, `fF`, `F`, or `auto`. |
+| `--csv [PATH]` | off | Capacitance matrix as CSV (`<output>.csv` if no path). Needs all nets. |
+| `--spice [PATH]` | off | Lumped SPICE subcircuit (`<output>.subckt` if no path). Needs all nets. |
+| `--html [PATH]` | off | Interactive 3D view of one walk per row (`<output>_3d.html` if no path). No matplotlib needed. |
+| `--visualization` | off | Show one walk per row in a matplotlib window after the run. |
+
+Examples:
+
+```bash
+# Tighter convergence, eight workers.
+frw input/DIELECTRIC_INPUT_3CONDUCTORS.m --tolerance 0.01 --workers 8
+
+# Finite window: absorbing in x and y, reflecting in z.
+frw input/FRW_MAT_test_cases/Testcase1_W0.14toS0.14/MATLABinputfile.m \
+    --window -1.96 2.1 -0.75 2.3 -1.4 2.8 --neumann-axes z
+
+# One row only, exported as an interactive HTML walk view.
+frw input/DIELECTRIC_INPUT_3CONDUCTORS.m --master Net1 --walks 2000 --html
+```
+
+More on how the runner works: [`src/FRW/README.md`](src/FRW/README.md).
+
+### `bgs-generate`: Boundary Gaussian Surfaces
+
+```bash
+bgs-generate INPUT_FILE (--master C1 | --all) [options]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--master NAME` | | Build the BGS around one conductor, for example `C1`. |
+| `--all` | | Build the BGS around every conductor in one plot. |
+| `--scale-factor` | `1` | Algorithm 4.2 scale factor. |
+| `--max-distance` | `10` | BGS extent for a conductor with no neighbours. |
+| `--touch-policy` | `skip` | `skip` ignores directly touching conductors; `error` stops instead. |
+| `--save-plot PATH` | | Save the 3D plot (with `--all`, defaults to `output/all_bgs.png`). |
+| `--no-show` | | Do not open a plot window. |
+
+### `vgss-sample`: VGSS sampling
+
+```bash
+vgss-sample INPUT_FILE (--net-master C1 | --all-nets) [options]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--net-master NAME` | | Sample the net that contains this conductor. |
+| `--all-nets` | | Sample every net independently. |
+| `--count` | `1` | Accepted points per net. |
+| `--seed` | random | NumPy seed for reproducible points. |
+| `--scale-factor` | `1` | Algorithm 4.2 scale factor. |
+| `--max-distance` | `10` | BGS extent for a conductor with no neighbours. |
+| `--abs-tol` | `1e-12` | Absolute geometric tolerance. |
+| `--save-points PATH` | | Write the points as CSV (`x,y,z`, or `net,x,y,z` with `--all-nets`). |
+| `--save-plot PATH` | | Save the 3D plot. |
+| `--no-show` | | Do not open a plot window. |
+
+More examples and the Python API: [`src/bgs/README.md`](src/bgs/README.md).
+
+## Input files
+
+Geometry is described in a small, non-executable subset of MATLAB. Each
+conductor `C<n>` is a matrix of its six faces, one row of four 3D vertices
+per face. Dielectric boxes `D<n>` use the same layout but may list fewer
+faces.
 
 ```matlab
 C1 = [
@@ -178,692 +263,39 @@ C1 = [
 ];
 ```
 
-MATLAB `%` comments are allowed. A legacy `eps_r = value` declaration before a conductor matrix is retained as compatibility metadata; it is not treated as a conductor material property and is not used by the current physics.
+Examples are in [`input/`](input/). The full format, including dielectric
+regions and permittivity variables, is described in
+[`src/input_formats/README.md`](src/input_formats/README.md).
 
-### Standard conductor + dielectric form
+## Project structure and documentation
 
-The included `input/DIELECTRIC_INPUT_3CONDUCTORS.m` demonstrates the new standard adapter shape. The interpreter currently recognizes:
-
-- `C<number>` as a conductor cuboid with six stored faces;
-- `D<number>` as a dielectric cuboid reconstructed from its owned/stored faces, which may be fewer than six;
-- `eps_d<number>` as that dielectric region's relative permittivity;
-- `eps_air` as the background relative permittivity;
-- `EPS_C*` / `EPS_D*` as resolved per-stored-face `(eps_in, eps_out)` metadata used for input consistency and retained for later interface work.
-
-The external ownership convention can omit shared dielectric faces. The interpreter reconstructs the full dielectric **volume** from the vertices that remain. BGS and FRW currently consume only `GeometryModel.conductors`; dielectric volumes are parsed and stored but do not yet change the walk.
-
-The geometry is expected to describe valid axis-aligned cuboids with unique `C*`/`D*` object names.
-
-# Python API
-
-## Imports
-
-The main BGS and VGSS functions are exported from `bgs`:
-
-```python
-from bgs import (
-    VGSSSamplingStats,
-    build_all_net_vgss,
-    build_net_vgss,
-    build_vgss_for_conductor,
-    find_touching_nets,
-    generate_all_bgs,
-    generate_bgs,
-    sample_on_vgss,
-)
-
-from input_formats import load_geometry
+```text
+src/
+├── input_formats/   # MATLAB parser and interpreter -> GeometryModel
+├── geometry/        # format-independent Bounds, Conductor, DielectricRegion, GeometryModel
+├── bgs/             # BGS, net detection, VGSS construction and sampling
+├── FRW/             # floating random walk, capacitance, convergence, CLI
+└── GGFT/            # reference-cube GFT/WVT tables and the C++ generator
+scripts/             # batch replay of the comparison workbook, worker benchmark
+tests/               # pytest suite and the QA convergence runner
+input/               # example geometries and test cases
 ```
 
-The original FRW functions remain in `FRW.random_walk`:
-
-```python
-from FRW.random_walk import (
-    get_system_bounds,
-    run_frw_geometry,
-    sample_point_on_bgs,
-    sample_point_on_maximal_cube,
-)
-```
-
-## Parse and interpret a geometry file
-
-```python
-from input_formats import load_geometry
-
-geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
-conductors = list(geometry.conductors)
-
-for conductor in geometry.conductors:
-    print(conductor.name, conductor.min_bounds, conductor.max_bounds)
-
-for dielectric in geometry.dielectrics:
-    print(dielectric.name, dielectric.bounds, dielectric.relative_permittivity)
-
-print("background eps_r =", geometry.background_permittivity)
-```
-
-`load_geometry()` returns a format-independent `GeometryModel`. This is the preferred API for new code and is the extension point for future input formats.
-
-For older code, `bgs.matlab_parser.parse_matlab_geometry(path)` is preserved and returns `list[Conductor]`.
-
-## Original conductor-level BGS API
-
-### Generate one BGS
-
-```python
-from bgs import generate_bgs
-from input_formats import load_geometry
-
-geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
-conductors = list(geometry.conductors)
-master = next(c for c in conductors if c.name == "C1")
-
-result = generate_bgs(
-    master,
-    conductors,
-    scale_factor=1.0,
-    max_distance=10.0,
-    touch_policy="skip",
-)
-
-surface = result.gaussian_surface
-print(surface.bounds)
-print(surface.area)
-print(result.initial_extents)
-print(result.final_extents)
-```
-
-`generate_bgs()` returns a `BGSGenerationResult` containing:
-
-- `master`;
-- `gaussian_surface`;
-- `initial_extents`;
-- `final_extents`;
-- `cap_distance`;
-- `pairwise_rows`;
-- `used_isolated_fallback`.
-
-`touch_policy="skip"` ignores directly touching blocks for this master's BGS. `touch_policy="error"` instead raises an error when direct contact is found.
-
-### Generate a BGS for every conductor
-
-```python
-from bgs import generate_all_bgs
-
-results = generate_all_bgs(
-    conductors,
-    scale_factor=1.0,
-    max_distance=10.0,
-    touch_policy="skip",
-)
-
-for result in results:
-    print(result.master.name, result.gaussian_surface.area)
-```
-
-These functions are retained for code that needs only the original conductor-level Algorithm 4.2 behavior.
-
-## Detect electrical nets
-
-```python
-from bgs import find_touching_nets
-
-nets = find_touching_nets(conductors)
-
-for net in nets:
-    print(net.name, net.conductor_names)
-```
-
-For example, a touching chain `C1-C2-C3` is detected as one transitive electrical net even when `C1` and `C3` do not directly touch.
-
-## Build the VGSS for a selected conductor's net
-
-`build_vgss_for_conductor()` is the simplest entry point when a conductor name is known.
-
-```python
-from bgs import build_vgss_for_conductor
-
-net_vgss = build_vgss_for_conductor(
-    conductors,
-    "C1",
-    scale_factor=1.0,
-    max_distance=10.0,
-)
-
-print(net_vgss.net.name)
-print(net_vgss.net.conductor_names)
-print(len(net_vgss.surfaces))
-```
-
-The returned `NetVGSS` contains:
-
-- `net`: the detected `ConductorNet`;
-- `bgs_results`: one `BGSGenerationResult` per conductor in the net;
-- `sampling_context`: precomputed Algorithm 4.1 data;
-- `surfaces`: a convenience property returning the net's BGS objects.
-
-## Build the VGSS for an existing net
-
-```python
-from bgs import build_net_vgss, find_touching_nets
-
-nets = find_touching_nets(conductors)
-selected_net = nets[0]
-
-net_vgss = build_net_vgss(
-    selected_net,
-    conductors,
-    scale_factor=1.0,
-    max_distance=10.0,
-)
-```
-
-Use this form when net detection and net selection are handled separately.
-
-## Build every net-level VGSS
-
-```python
-from bgs import build_all_net_vgss
-
-all_net_vgss = build_all_net_vgss(
-    conductors,
-    scale_factor=1.0,
-    max_distance=10.0,
-)
-
-for item in all_net_vgss:
-    print(item.net.name, item.net.conductor_names)
-```
-
-`build_all_net_vgss()` returns a tuple containing one independent `NetVGSS` object for each detected net.
-
-## Sample one accepted VGSS point
-
-```python
-import numpy as np
-
-from bgs import build_vgss_for_conductor, sample_on_vgss
-
-net_vgss = build_vgss_for_conductor(conductors, "C1")
-rng = np.random.default_rng(1234)
-
-sample = sample_on_vgss(net_vgss.sampling_context, rng)
-print(sample.point)
-```
-
-`sample_on_vgss()` returns a `VGSSSample` with these fields:
-
-| Field | Meaning |
+| Folder | Documentation |
 |---|---|
-| `point` | accepted coordinate `[x, y, z]`, a NumPy array with shape `(3,)` |
-| `normal` | outward unit normal of the face the point was sampled on |
-| `source_surface_index` | index of the BGS (within the net's VGSS) that produced the point |
-| `face_direction` | name of that face: `PX`, `PY`, `PZ`, `NX`, `NY` or `NZ` |
-
-A different point is proposed for every call. Reuse the same NumPy generator when deterministic repeatability is required.
-
-## Sample multiple points from every net
-
-```python
-import numpy as np
-
-from bgs import build_all_net_vgss, sample_on_vgss
-
-rng = np.random.default_rng(1234)
-all_net_vgss = build_all_net_vgss(conductors)
-
-sampled_points = {
-    item.net.name: np.vstack(
-        [
-            sample_on_vgss(item.sampling_context, rng).point
-            for _ in range(200)
-        ]
-    )
-    for item in all_net_vgss
-}
-```
-
-## Custom importance function `p(r)`
-
-The importance function and its upper bound are attached to the sampling context when the VGSS is built.
-
-```python
-import numpy as np
-
-from bgs import build_vgss_for_conductor, sample_on_vgss
-
-
-def F(r: np.ndarray) -> float:
-    return 0.5
-
-
-net_vgss = build_vgss_for_conductor(
-    conductors,
-    "C1",
-    importance_function=F,
-    upper_bound=1.0,
-)
-
-rng = np.random.default_rng(1234)
-sample = sample_on_vgss(net_vgss.sampling_context, rng)
-```
-
-The caller must currently ensure that:
-
-```text
-U > 0
-0 <= p(r) <= U
-```
-
-for every possible VGSS point. An invalid `p(r)` or `U` can make the rejection sampler incorrect or prevent acceptance.
-
-## Estimate `H`
-
-`VGSSSamplingStats` records raw proposals and all rejection categories.
-
-```python
-import numpy as np
-
-from bgs import VGSSSamplingStats, sample_on_vgss
-
-rng = np.random.default_rng(1234)
-stats = VGSSSamplingStats()
-
-points = np.vstack(
-    [
-        sample_on_vgss(
-            net_vgss.sampling_context,
-            rng,
-            stats=stats,
-        ).point
-        for _ in range(5000)
-    ]
-)
-
-H = stats.estimate_H(net_vgss.sampling_context)
-print(H)
-print(stats.as_dict(net_vgss.sampling_context))
-```
-
-The estimator is:
-
-```text
-H = U * A_raw * accepted_count / proposal_count
-```
-
-where `A_raw` is the sum of the areas of the component BGSs stored in the sampling context.
-
-For `p(r) = 1`, `H` estimates the actual exterior VGSS area after the geometry and multiplicity corrections.
-
-## Visualize VGSS results
-
-Requires the optional `plot` extra (`pip install -e ".[plot]"`).
-
-```python
-from bgs import plot_vgss_results
-
-plot_vgss_results(
-    conductors,
-    all_net_vgss,
-    sampled_points,
-    save_path="output/all_net_vgss_samples.png",
-    show=False,
-)
-```
-
-The `sampled_points` dictionary must be keyed by net name, for example `Net1`.
-
-# FRW integration
-
-The FRW implementation keeps its original maximal-cube walk logic. Every walk
-begins from a fresh point accepted by `SampleOnVGSS`. The first cube supports
-both the original transition and derivative-importance stratification through
-the same `sample_first_transition()` method.
-
-`run_one_walk()` returns a compact `WalkOutcome` containing the terminal net,
-first-hop weight, termination reason, and hop count. Its complete cube trace is
-optional. The command-line runner consumes each outcome immediately, updates
-the capacitance and metric accumulators, and then discards it.
-
-## Run FRW for one selected net
-
-```python
-import numpy as np
-
-from FRW.random_walk import run_frw_geometry
-from bgs import build_vgss_for_conductor
-from input_formats import load_geometry
-
-geometry = load_geometry("input/DIELECTRIC_INPUT_3CONDUCTORS.m")
-conductors = list(geometry.conductors)
-
-master_vgss = build_vgss_for_conductor(
-    conductors,
-    "C1",
-    scale_factor=1.25,
-    max_distance=10.0,
-)
-
-result = run_frw_geometry(
-    conductors,
-    master_vgss,
-    np.random.default_rng(1234),
-    num_walks=5000,
-    max_hops=100,
-)
-
-print(result["H"])
-print(result["sampling_stats"])
-```
-
-The Python API defaults to `first_transition_mode="standard"`, preserving the
-original behavior. Opt in to balanced stratification with:
-
-```python
-result = run_frw_geometry(
-    conductors,
-    master_vgss,
-    np.random.default_rng(1234),
-    num_walks=5000,
-    first_transition_mode="stratified",
-)
-```
-
-Stratified mode assigns half the walks to the inward geometric half of the
-first cube and half to the outward half, so `num_walks` must be even. Within
-each half, panels are sampled in proportion to the absolute normal derivative.
-The weight retains the sampled panel's derivative sign; this does not assume a
-homogeneous or sign-symmetric table.
-
-## Run FRW for every detected net
-
-```python
-import numpy as np
-
-from FRW.random_walk import run_frw_geometry
-from bgs import build_all_net_vgss
-
-rng = np.random.default_rng(1234)
-all_net_vgss = build_all_net_vgss(conductors)
-
-results = {
-    item.net.name: run_frw_geometry(
-        conductors,
-        item,
-        rng,
-        num_walks=5000,
-        max_hops=100,
-    )
-    for item in all_net_vgss
-}
-```
-
-## FRW return value
-
-`run_frw_geometry()` returns a dictionary shaped like this:
-
-```text
-{
-    "H": H_estimate,
-    "first_transition_mode": "standard_or_stratified",
-    "sampling_stats": {
-        "proposal_count": ...,
-        "accepted_count": ...,
-        "rejection_count": ...,
-        "geometry_rejections": ...,
-        "multiplicity_rejections": ...,
-        "importance_rejections": ...,
-        "acceptance_rate": ...,
-        "upper_bound_U": ...,
-        "total_component_area": ...,
-        "H_estimate": ...,
-    },
-    "walks": [
-        {
-            "start_point": [x, y, z],
-            "first_transition_mode": "standard_or_stratified",
-            "first_transition_stratum": "inward_outward_or_null",
-            "path_data": [
-                {
-                    "center": [x, y, z],
-                    "a": maximal_cube_side_length,
-                }
-            ],
-            "hit_conductor": conductor_name_or_ground,
-        }
-    ],
-}
-```
-
-The compatibility `run_frw_geometry()` batch API still returns the stored
-`walks` list shown above, including `path_data`. The CLI uses the compact online
-path instead and does not export individual walks.
-
-# Command-line usage
-
-The module commands below work directly with the current source tree after installation.
-
-## Generate one conductor-level BGS
-
-```bash
-python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --master C1 \
-    --scale-factor 2
-```
-
-Save the plot without opening a window:
-
-```bash
-python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --master C1 \
-    --scale-factor 2 \
-    --save-plot output/C1_bgs.png \
-    --no-show
-```
-
-## Generate BGSs for every conductor
-
-```bash
-python -m bgs.main input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --all \
-    --scale-factor 2 \
-    --save-plot output/all_bgs.png \
-    --no-show
-```
-
-When `--save-plot` is omitted in `--all` mode, the combined plot is saved as `output/all_bgs.png`.
-
-## Sample one selected net
-
-`--net-master` identifies a conductor belonging to the desired net.
-
-```bash
-python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --net-master C1 \
-    --count 10 \
-    --seed 1234 \
-    --no-show
-```
-
-Save coordinates and a visualization:
-
-```bash
-python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --net-master C1 \
-    --count 1000 \
-    --seed 1234 \
-    --save-points output/vgss_points.csv \
-    --save-plot output/net1_vgss.png \
-    --no-show
-```
-
-Single-net CSV output contains:
-
-```text
-x,y,z
-```
-
-## Sample every detected net
-
-```bash
-python -m bgs.vgss_cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --all-nets \
-    --count 1000 \
-    --seed 1234 \
-    --save-points output/all_net_vgss_points.csv \
-    --save-plot output/all_net_vgss_samples.png \
-    --no-show
-```
-
-With `--all-nets`, `--count` is the number of accepted points generated for each net. The CSV contains:
-
-```text
-net,x,y,z
-```
-
-The installed `vgss-sample` console command is equivalent to `python -m bgs.vgss_cli`.
-
-## Run the integrated FRW
-
-```bash
-python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --scale-factor 1.25 \
-    --max-distance 10 \
-    --seed 1234 \
-    --workers 4 \
-    --output output/frw_exported_data.json
-```
-
-Adaptive convergence is the CLI default. Each master row stops independently
-when its row-max three-standard-error ratio is at most `0.03`, after at least
-2,000 walks and 10 hits per target entry. The default hard limit is 1,000,000
-walks, with checks every 200 walks. All counts are even so checks occur only
-after complete inward/outward pairs.
-
-Use the adaptive options to change those limits:
-
-```bash
-python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m \
-    --tolerance 0.02 \
-    --min-walks 4000 \
-    --max-walks 200000 \
-    --check-every 400 \
-    --min-hits 20
-```
-
-Supplying `--walks` selects fixed mode and disables convergence:
-
-```bash
-python -m FRW.cli input/DIELECTRIC_INPUT_3CONDUCTORS.m --walks 5000
-```
-
-If `--master` is omitted, the CLI runs every detected net and assembles the
-full capacitance matrix. Rows are independent and run in separate worker
-processes. The default is at most five workers; the actual number is limited to
-the number of selected rows. For example, two rows use two workers, while
-`--master Net1` runs sequentially without creating a process pool. Use
-`--workers 1` to force sequential execution.
-
-Each row has an independent deterministic RNG stream derived from `--seed`, so
-parallel scheduling and one row stopping earlier do not change another row's
-random sequence. Visualization is disabled by default; add `--visualization`
-to display one saved walk for each master net after all calculations finish.
-
-Capacitance and metrics are accumulated as each walk finishes. In stratified
-mode, each inward/outward pair forms one statistical sample. The output reports
-the pair count, online standard error, convergence ratio, stopping reason, and
-actual walks used for each row. Matrix symmetry remains a diagnostic and is not
-used as a stopping condition. A full path is retained only for the first walk
-when visualization is requested.
-
-The Python API remains backward compatible and defaults to the standard first
-transition. To revert the CLI itself to standard sampling, change its
-`first_transition_mode="stratified"` call to `"standard"`; the GGFT API and
-standard implementation remain intact.
-
-## Replay the three Excel comparison cases
-
-Requires the optional `excel` extra (`pip install -e ".[excel]"`).
-
-The comparison workbook records the exact windows and boundary conditions used
-for `W0.14_S0.14`, `W0.14_S0.70`, and `W0.14_S2.8`. To replay its stratified
-jobs with a `0.01` convergence tolerance:
-
-```bash
-python scripts/run_excel_cases.py
-```
-
-The runner adds `Current FRW Jobs`, `Current FRW Matrices`, and
-`Current Comparisons` sheets. It writes the workbook and a JSON checkpoint
-after every job. Press `Ctrl+C` to stop the current FRW process group; running
-the same command again skips completed jobs and resumes at the interrupted job.
-The original workbook is copied once to
-`frw_raphael_window_comparison.original.xlsx`.
-
-Useful controls include:
-
-```bash
-# Inspect every command without running FRW.
-python scripts/run_excel_cases.py --list
-
-# Run or resume one case.
-python scripts/run_excel_cases.py --case W0.14_S0.70
-
-# Recalculate completed jobs instead of skipping them.
-python scripts/run_excel_cases.py --rerun
-```
-
-By default the runner keeps the recorded seed, scale factor, 20,000-walk
-minimum, 20,000,000-walk limit, and 5,000-hop limit. It uses four row workers.
-The output JSON files, logs, and checkpoint are stored under
-`output/current_excel_runs`.
-
-# Parameters
-
-## `scale_factor`
-
-Must be at least `1.0`.
-
-For a non-isolated conductor, the BGS cap is calculated as:
-
-```text
-min(finite initial extents) * scale_factor
-```
-
-Each final directional extent is limited by that cap.
-
-## `max_distance`
-
-Must be positive.
-
-It is used as a fallback extent only when no finite non-touching conductor constraint exists for the current master conductor.
-
-## `abs_tol`
-
-Controls floating-point comparisons for touching, overlap, surface coincidence, and candidate classification. The default is `1e-12`.
-
-## `max_attempts`
-
-`sample_on_vgss()` defaults to `10000` proposal attempts for one accepted point. It raises `RuntimeError` when no proposal is accepted within that limit.
-
-# Tests
-
-Run the complete test suite from the repository root:
+| `src/input_formats` | [Input file format and parser API](src/input_formats/README.md) |
+| `src/geometry` | [Shared geometry model](src/geometry/README.md) |
+| `src/bgs` | [BGS/VGSS algorithms, Python API and parameters](src/bgs/README.md) |
+| `src/FRW` | [Walk engine, Python API and runner details](src/FRW/README.md) |
+| `src/GGFT` | [Transition tables and how to regenerate them](src/GGFT/README.md) |
+| `scripts` | [Workbook replay and worker benchmark](scripts/README.md) |
+| `tests` | [Test suite and QA convergence runner](tests/README.md) |
+
+## Tests
 
 ```bash
 pytest
 ```
 
 The plotting test is skipped automatically when matplotlib is not installed.
-See [`tests/README.md`](tests/README.md) for what each test module covers and
-for the `qa_tester.py` convergence batch runner.
-
-# Current limitations
-
-- Conductors must be axis-aligned cuboids.
-- Overlapping conductor volumes are invalid input.
-- Dielectric volumes/background permittivity are represented internally, but dielectric transition physics is not implemented yet.
-- `EPS_*` boundary-permittivity metadata is parsed and retained but is not yet consumed by FRW.
-- The caller must currently provide a valid positive `U` and a function satisfying `0 <= p(r) <= U`.
-- The implementation prioritizes correctness and clarity over large-scale performance optimization.
+See [`tests/README.md`](tests/README.md) for what each test module covers.
