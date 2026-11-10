@@ -20,6 +20,14 @@ The `tests/` directory contains automated checks for the individual components o
 * **`test_vgss_geometry.py`**: Enforces strict geometric rules, ensuring that proposed points inside other surfaces or on opposite normals are correctly rejected.
 * **`test_sampling.py` & `test_vgss_integration.py`**: Validates Algorithm 4.1 (SampleOnVGSS), ensuring points are correctly sampled, rejected based on multiplicity, and assigned to valid surface faces.
 * **`test_frw_integration.py`**: End-to-end checks to guarantee that the Random Walk correctly initializes on the VGSS and tracks its paths, hops, and terminal targets. The integration geometry is constructed inside the test so the suite does not depend on private/local input files.
+* **`test_boundary.py`**: Finite-window boundary conditions: Dirichlet faces absorb, Neumann faces reflect, mixed windows limit only their Dirichlet axes, and BGS faces lying on Neumann walls are omitted.
+* **`test_capacitance.py`**: Capacitance-row accumulation (touching blocks grouped by net, window hits, walks escaping to infinity), stratified complete-pair statistics, and matrix assembly from independent rows.
+* **`test_convergence.py`**: Adaptive row-max 3SE convergence, minimum-hit requirements, no false convergence on zero rows, and CLI selection between adaptive and fixed walk counts.
+* **`test_cli_master_selection.py`**: Selecting a master net by name and accepting a mixed finite window from the CLI.
+* **`test_ggft_loading.py`**: The default GGFT tables load independently of the current working directory.
+* **`test_ggft_stratified.py`**: The stratified first transition has the same expectation as the standard one, preserves mixed derivative signs, and rejects invalid inputs.
+* **`test_metrics_print.py`**: The compact walk-metrics accumulator and its printed summary.
+* **`test_visualization_trace.py`**: Converting a saved walk into a visualization trace, and the interactive HTML export.
 
 
 ### Parser/Interpreter Boundary
@@ -63,7 +71,8 @@ Because Monte Carlo simulations like the Floating Random Walk require testing ac
 * **Excel-Native Export:** Aggregates execution data (hit rates, hop standard deviations, rejection counts, and final estimates) into a flat `qa_convergence_results.csv` format that opens natively in Microsoft Excel.
 
 ### CLI Flags and Configuration
-You can fully control the QA script from your terminal. Use `python qa_tester.py --help` for a quick reference.
+You can fully control the QA script from your terminal. Use `python tests/qa_tester.py --help` for a quick reference. The script
+switches to the project root itself, so it works from any directory.
 
 #### Target Overrides (What to Test)
 * `--files`: Specify exact `.m` files to test (e.g., `--files INPUTFILE_01.m`). If omitted, it runs every `.m` file in the `input/` directory.
@@ -82,4 +91,16 @@ You can fully control the QA script from your terminal. Use `python qa_tester.py
 #### 1. The Quick Diagnostic Check
 Test a single file on a single core, generating plots for a low number of walks to ensure the geometry parses and walks correctly.
 ```bash
-python qa_tester.py --files INPUTFILE_01.m --walks 100 500 --workers 1
+python tests/qa_tester.py --files INPUTFILE_01.m --walks 100 500 --workers 1
+```
+
+#### 2. A Full Batch Run
+Run every `.m` file directly in `input/` (subfolders are not scanned) across
+the default seeds, scale factors and walk counts, without plots, using half
+of the available CPU cores.
+```bash
+python tests/qa_tester.py --no-plots
+```
+
+Results are written to `output/qa_results/qa_convergence_results.csv`, and
+plots (when enabled) to `output/qa_results/plots/`.
