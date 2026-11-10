@@ -57,7 +57,7 @@ The implementation therefore ignores only the directly touching conductor or con
 
 ## Installation
 
-Python 3.10 or newer is required. The only required runtime dependency is
+Python 3.9 or newer is required. The only required runtime dependency is
 **NumPy**; everything else is optional:
 
 | Extra | Packages | Needed for |

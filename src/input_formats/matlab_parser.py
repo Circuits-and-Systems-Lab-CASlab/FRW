@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+from typing import Union
 
 
 _NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
@@ -34,7 +35,7 @@ class MatlabMatrixAssignment:
     rows: tuple[tuple[float | str, ...], ...]
 
 
-MatlabAssignment = MatlabScalarAssignment | MatlabMatrixAssignment
+MatlabAssignment = Union[MatlabScalarAssignment, MatlabMatrixAssignment]
 
 
 @dataclass(frozen=True)

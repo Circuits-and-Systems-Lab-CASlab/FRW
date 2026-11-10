@@ -1,5 +1,7 @@
 """Input adapters that parse source formats into the shared geometry model."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from geometry import GeometryModel
