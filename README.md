@@ -30,7 +30,12 @@ The implementation currently supports:
 - configurable importance rejection using `p(r) / U`;
 - estimation of the normalization integral `H` from sampling statistics;
 - 3D visualization of conductors, BGSs, VGSSs, and accepted sample points;
-- use of accepted VGSS points as FRW starting points.
+- use of accepted VGSS points as FRW starting points;
+- open space or a finite window with per-axis Dirichlet (absorbing) or Neumann (reflecting) faces;
+- standard or derivative-stratified first transitions;
+- adaptive convergence on the row-max 3SE criterion, or a fixed walk count;
+- the full capacitance matrix, computed row by row in parallel worker processes;
+- JSON, CSV, and SPICE subcircuit export, plus an interactive 3D HTML walk view.
 
 The default importance function is:
 
@@ -383,17 +388,18 @@ from bgs import build_vgss_for_conductor, sample_on_vgss
 net_vgss = build_vgss_for_conductor(conductors, "C1")
 rng = np.random.default_rng(1234)
 
-r = sample_on_vgss(net_vgss.sampling_context, rng)
-print(r)
+sample = sample_on_vgss(net_vgss.sampling_context, rng)
+print(sample.point)
 ```
 
-`sample_on_vgss()` returns only the accepted coordinate:
+`sample_on_vgss()` returns a `VGSSSample` with these fields:
 
-```text
-[x, y, z]
-```
-
-The returned value is a NumPy array with shape `(3,)`.
+| Field | Meaning |
+|---|---|
+| `point` | accepted coordinate `[x, y, z]`, a NumPy array with shape `(3,)` |
+| `normal` | outward unit normal of the face the point was sampled on |
+| `source_surface_index` | index of the BGS (within the net's VGSS) that produced the point |
+| `face_direction` | name of that face: `PX`, `PY`, `PZ`, `NX`, `NY` or `NZ` |
 
 A different point is proposed for every call. Reuse the same NumPy generator when deterministic repeatability is required.
 
@@ -410,7 +416,7 @@ all_net_vgss = build_all_net_vgss(conductors)
 sampled_points = {
     item.net.name: np.vstack(
         [
-            sample_on_vgss(item.sampling_context, rng)
+            sample_on_vgss(item.sampling_context, rng).point
             for _ in range(200)
         ]
     )
@@ -440,7 +446,7 @@ net_vgss = build_vgss_for_conductor(
 )
 
 rng = np.random.default_rng(1234)
-r = sample_on_vgss(net_vgss.sampling_context, rng)
+sample = sample_on_vgss(net_vgss.sampling_context, rng)
 ```
 
 The caller must currently ensure that:
@@ -470,7 +476,7 @@ points = np.vstack(
             net_vgss.sampling_context,
             rng,
             stats=stats,
-        )
+        ).point
         for _ in range(5000)
     ]
 )
@@ -595,9 +601,9 @@ results = {
 
 ## FRW return value
 
-`run_frw_geometry()` returns:
+`run_frw_geometry()` returns a dictionary shaped like this:
 
-```python
+```text
 {
     "H": H_estimate,
     "first_transition_mode": "standard_or_stratified",
@@ -849,22 +855,9 @@ Run the complete test suite from the repository root:
 pytest
 ```
 
-The current suite covers:
-
-- directional distances;
-- BGS generation;
-- raw MATLAB parser and semantic interpreter behavior;
-- legacy parser compatibility;
-- standard conductor/dielectric volume reconstruction;
-- direct-touch skipping;
-- overlap rejection;
-- transitive net construction;
-- Algorithm 4.1 geometry rejection;
-- multiplicity rejection;
-- all-net VGSS construction;
-- VGSS visualization;
-- `H` estimation;
-- FRW integration and output compatibility.
+The plotting test is skipped automatically when matplotlib is not installed.
+See [`tests/README.md`](tests/README.md) for what each test module covers and
+for the `qa_tester.py` convergence batch runner.
 
 # Current limitations
 
