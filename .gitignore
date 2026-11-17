@@ -10,3 +10,15 @@ output/*
 *.json
 *.swp
 *~
+# Windows alternate data streams (Zone Identifiers)
+*:Zone.Identifier
+
+# Directories
+changes_documentation/
+scripts/raphael_files/
+tests/fixtures/
+src/GGFT/tests/
+
+# Specific Python scripts and input files
+scripts/INPUT_FILE_01_W0p14_S0p14
+scripts/matlab_to_raphael_diel.py
